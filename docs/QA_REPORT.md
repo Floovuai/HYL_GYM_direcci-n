@@ -28,6 +28,7 @@ Fecha: 2026-06-30
 - `/api/ai/health`: Groq responde `OK` con `llama-3.3-70b-versatile`.
 - `/api/ai/ask`: consulta comercial real responde con acciones priorizadas sobre duplicados, score, metas y ventas.
 - UI Direccion: muestra `Groq: configurado`, no expone patron de token `gsk_` en DOM ni inputs.
+- UI Direccion > Configuracion: subpestana `Mecanica de comisiones` explica asesores, multiplicadores y bonos de director.
 - `/api/export/gerencial.pdf`: descarga PDF gerencial con secciones seleccionables.
 - `/api/export/gerencial.pdf&includeGroq=1`: descarga PDF con sugerencias Groq, sin exponer token.
 - Render PDF con Poppler: portada, graficos, tablas diarias/mensuales/anuales y saltos de pagina revisados visualmente.

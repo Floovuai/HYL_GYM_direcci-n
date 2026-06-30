@@ -73,6 +73,10 @@ function percent(value: number) {
   return `${Math.round(Number(value || 0) * 100)}%`;
 }
 
+function ratePercent(value: number) {
+  return `${new Intl.NumberFormat("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(value || 0) * 100)}%`;
+}
+
 function compact(value: number) {
   return new Intl.NumberFormat("es-CO", { notation: "compact", maximumFractionDigits: 1 }).format(Number(value || 0));
 }
@@ -661,6 +665,7 @@ function Direction({ state, year, month, onReload, setNotice }: { state: AppStat
     groq_api_key: "",
     groq_model: state.settings.groq_model || "llama-3.3-70b-versatile"
   });
+  const [configTab, setConfigTab] = React.useState<"integrations" | "commissions">("integrations");
   const [prompt, setPrompt] = React.useState("Verifica duplicados, calidad de datos y dame 5 acciones comerciales para mejorar el rendimiento de asesores y sedes.");
   const [answer, setAnswer] = React.useState("");
   const groqConfigured = state.settings.groq_api_key_configured === "true";
@@ -720,21 +725,31 @@ function Direction({ state, year, month, onReload, setNotice }: { state: AppStat
           <Progress value={state.kpis.targetProgress} />
         </section>
         <section className="panel">
-          <div className="panel-title"><h2>Integraciones</h2><Settings size={18} /></div>
-          <div className="form-grid">
-            <input value={settings.evo_base_url} onChange={(event) => setSettings({ ...settings, evo_base_url: event.target.value })} placeholder="URL EVO" />
-            <input value={settings.evo_api_key} onChange={(event) => setSettings({ ...settings, evo_api_key: event.target.value })} placeholder={evoConfigured ? "Clave API EVO configurada" : "Clave API EVO"} type="password" />
-            <input value={settings.groq_api_key} onChange={(event) => setSettings({ ...settings, groq_api_key: event.target.value })} placeholder={groqConfigured ? "Clave API Groq configurada" : "Clave API Groq"} type="password" />
-            <input value={settings.groq_model} onChange={(event) => setSettings({ ...settings, groq_model: event.target.value })} placeholder="Modelo GROQ" />
+          <div className="panel-title"><h2>Configuración de la plataforma</h2><Settings size={18} /></div>
+          <div className="config-tabs" role="tablist" aria-label="Configuración">
+            <button className={configTab === "integrations" ? "active" : ""} onClick={() => setConfigTab("integrations")}>Integraciones</button>
+            <button className={configTab === "commissions" ? "active" : ""} onClick={() => setConfigTab("commissions")}>Mecánica de comisiones</button>
           </div>
-          <div className="integration-status">
-            <span>Groq: {groqConfigured ? "configurado" : "pendiente"}</span>
-            <span>EVO: {evoConfigured ? "configurado" : "pendiente"}</span>
-          </div>
-          <div className="button-row">
-            <button onClick={saveSettings}>Guardar</button>
-            <button onClick={() => syncEvo().catch((error) => setNotice(error.message))}>EVO</button>
-          </div>
+          {configTab === "integrations" ? (
+            <>
+              <div className="form-grid">
+                <input value={settings.evo_base_url} onChange={(event) => setSettings({ ...settings, evo_base_url: event.target.value })} placeholder="URL EVO" />
+                <input value={settings.evo_api_key} onChange={(event) => setSettings({ ...settings, evo_api_key: event.target.value })} placeholder={evoConfigured ? "Clave API EVO configurada" : "Clave API EVO"} type="password" />
+                <input value={settings.groq_api_key} onChange={(event) => setSettings({ ...settings, groq_api_key: event.target.value })} placeholder={groqConfigured ? "Clave API Groq configurada" : "Clave API Groq"} type="password" />
+                <input value={settings.groq_model} onChange={(event) => setSettings({ ...settings, groq_model: event.target.value })} placeholder="Modelo GROQ" />
+              </div>
+              <div className="integration-status">
+                <span>Groq: {groqConfigured ? "configurado" : "pendiente"}</span>
+                <span>EVO: {evoConfigured ? "configurado" : "pendiente"}</span>
+              </div>
+              <div className="button-row">
+                <button onClick={saveSettings}>Guardar</button>
+                <button onClick={() => syncEvo().catch((error) => setNotice(error.message))}>EVO</button>
+              </div>
+            </>
+          ) : (
+            <CommissionMechanics state={state} />
+          )}
         </section>
       </div>
       <section className="panel">
@@ -789,6 +804,139 @@ function Direction({ state, year, month, onReload, setNotice }: { state: AppStat
           ))}
         </div>
       </section>
+    </div>
+  );
+}
+
+const advisorCommissionLevels = [
+  { level: "Activación", condition: "Alcanza meta de activación", rate: 0.0015, bonus: 0 },
+  { level: "Bronce", condition: "Alcanza meta bronce", rate: 0.0025, bonus: 0 },
+  { level: "Plata", condition: "Alcanza meta plata", rate: 0.0035, bonus: 0 },
+  { level: "Meta 1", condition: "Alcanza Meta 1", rate: 0.005, bonus: 0 },
+  { level: "Meta 2", condition: "Alcanza Meta 2", rate: 0.008, bonus: 0 },
+  { level: "Meta 3", condition: "Alcanza Meta 3", rate: 0.012, bonus: 0 },
+  { level: "Meta 4", condition: "Alcanza Meta 4", rate: 0.02, bonus: 500000 }
+];
+
+const evaluationMultipliers = [
+  { label: "Malo", score: 60, multiplier: 0.6 },
+  { label: "Regular", score: 75, multiplier: 0.85 },
+  { label: "Bueno", score: 85, multiplier: 1 },
+  { label: "Excelente", score: 100, multiplier: 1.15 }
+];
+
+const directorCommissionLevels = [
+  { level: "Meta 1", condition: "La sede alcanza Meta 1", bonus: 100000 },
+  { level: "Meta 2", condition: "La sede alcanza Meta 2", bonus: 200000 },
+  { level: "Meta 3", condition: "La sede alcanza Meta 3 o más", bonus: 500000 }
+];
+
+function CommissionMechanics({ state }: { state: AppState }) {
+  const topAdvisor = state.advisors.find((advisor: any) => advisor.sales > 0);
+  const topBranch = state.branches.find((branch: any) => branch.sales > 0);
+  return (
+    <div className="commission-guide">
+      <div className="guide-summary">
+        <article>
+          <span>Comisiones asesores</span>
+          <strong>{currency(state.kpis.totalAdvisorCommissions)}</strong>
+          <small>Suma final del mes filtrado</small>
+        </article>
+        <article>
+          <span>Comisiones director</span>
+          <strong>{currency(state.kpis.totalDirectorCommissions)}</strong>
+          <small>Suma de bonos por sede</small>
+        </article>
+      </div>
+
+      <div className="guide-block">
+        <h3>1. Cómo se calcula la comisión de un asesor</h3>
+        <p>La plataforma toma las ventas del asesor en el mes, identifica el nivel más alto alcanzado contra sus metas y calcula una comisión base.</p>
+        <code>Comisión base = ventas del asesor x porcentaje del nivel + bono fijo</code>
+        <p>Después aplica dos multiplicadores: calidad y gestión administrativa. Esos multiplicadores pueden subir o bajar la comisión final.</p>
+        <code>Comisión final = comisión base x multiplicador calidad x multiplicador gestión</code>
+      </div>
+
+      <div className="table-wrap small">
+        <table>
+          <thead>
+            <tr><th>Nivel</th><th>Condición</th><th>Porcentaje</th><th>Bono fijo</th></tr>
+          </thead>
+          <tbody>
+            {advisorCommissionLevels.map((item) => (
+              <tr key={item.level}>
+                <td>{item.level}</td>
+                <td>{item.condition}</td>
+                <td>{ratePercent(item.rate)}</td>
+                <td>{currency(item.bonus)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="guide-block">
+        <h3>2. Ajuste por calidad y gestión</h3>
+        <p>La evaluación mensual impacta la comisión. Si el asesor tiene calidad y gestión excelentes, la comisión se multiplica dos veces por 1,15. Si tiene una evaluación baja, se reduce.</p>
+      </div>
+      <div className="mini-grid">
+        {evaluationMultipliers.map((item) => (
+          <article key={item.label}>
+            <strong>{item.label}</strong>
+            <span>Puntaje {item.score}</span>
+            <small>Multiplica x {item.multiplier}</small>
+          </article>
+        ))}
+      </div>
+
+      <div className="guide-block">
+        <h3>3. Cómo se calculan tus comisiones como director</h3>
+        <p>Tu comisión se calcula por sede. Cada sede se evalúa contra sus metas del mes. Si una sede llega a Meta 1, Meta 2 o Meta 3, genera un bono fijo. El total del director es la suma de los bonos de todas las sedes.</p>
+      </div>
+      <div className="table-wrap small">
+        <table>
+          <thead>
+            <tr><th>Nivel sede</th><th>Condición</th><th>Bono director</th></tr>
+          </thead>
+          <tbody>
+            {directorCommissionLevels.map((item) => (
+              <tr key={item.level}>
+                <td>{item.level}</td>
+                <td>{item.condition}</td>
+                <td>{currency(item.bonus)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="guide-block">
+        <h3>4. Diferencia entre comisión y score</h3>
+        <p>La comisión paga el resultado económico según metas y evaluaciones. El score mide salud comercial: avance a Meta 1, avance a Meta 4, calidad, gestión, conversiones y descuentos. Sirve para priorizar seguimiento y acciones comerciales.</p>
+      </div>
+
+      <div className="example-grid">
+        {topAdvisor ? (
+          <article>
+            <h3>Ejemplo actual de asesor</h3>
+            <strong>{topAdvisor.name}</strong>
+            <span>{topAdvisor.branchName}</span>
+            <div className="metric-row"><span>Ventas mes</span><strong>{currency(topAdvisor.sales)}</strong></div>
+            <div className="metric-row"><span>Nivel</span><strong>{topAdvisor.commission.level}</strong></div>
+            <div className="metric-row"><span>Comisión final</span><strong>{currency(topAdvisor.commission.finalCommission)}</strong></div>
+          </article>
+        ) : null}
+        {topBranch ? (
+          <article>
+            <h3>Ejemplo actual de sede</h3>
+            <strong>{topBranch.name}</strong>
+            <span>Director</span>
+            <div className="metric-row"><span>Ventas mes</span><strong>{currency(topBranch.sales)}</strong></div>
+            <div className="metric-row"><span>Nivel</span><strong>{topBranch.directorCommission.level}</strong></div>
+            <div className="metric-row"><span>Bono director</span><strong>{currency(topBranch.directorCommission.bonus)}</strong></div>
+          </article>
+        ) : null}
+      </div>
     </div>
   );
 }

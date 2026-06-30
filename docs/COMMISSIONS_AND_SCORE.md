@@ -1,5 +1,7 @@
 # Comisiones y score
 
+En la plataforma, esta mecanica esta disponible en `Direccion > Configuracion de la plataforma > Mecanica de comisiones`.
+
 ## Asesores
 
 Niveles del Excel:

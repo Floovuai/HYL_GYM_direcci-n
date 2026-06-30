@@ -10,6 +10,8 @@
   --amber: #c47b22;
   --blue: #3467a7;
   --red: #c84d36;
+  --muted: #697069;
+  --panel-strong: #fbfcfa;
 }
 
 * {
@@ -543,6 +545,97 @@ td small {
   background: var(--panel-strong);
 }
 
+.config-tabs {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f4f6f3;
+}
+
+.config-tabs button {
+  border: 0;
+  min-height: 34px;
+  padding: 0 12px;
+  border-radius: 6px;
+  color: #202421;
+  background: transparent;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.config-tabs button.active {
+  color: white;
+  background: var(--green);
+}
+
+.commission-guide {
+  display: grid;
+  gap: 12px;
+}
+
+.guide-summary,
+.mini-grid,
+.example-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.guide-summary article,
+.mini-grid article,
+.example-grid article {
+  display: grid;
+  gap: 5px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfa;
+}
+
+.guide-summary span,
+.guide-summary small,
+.mini-grid span,
+.mini-grid small,
+.example-grid span {
+  color: var(--ink-soft);
+}
+
+.guide-summary strong {
+  font-size: 20px;
+  letter-spacing: 0;
+}
+
+.guide-block {
+  display: grid;
+  gap: 7px;
+}
+
+.guide-block h3,
+.example-grid h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.guide-block p {
+  margin: 0;
+  color: var(--ink-soft);
+  line-height: 1.45;
+}
+
+.guide-block code {
+  display: block;
+  white-space: normal;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: #202421;
+  background: #eef6f2;
+  font-size: 13px;
+}
+
 .link-button {
   border: 0;
   background: transparent;
@@ -760,7 +853,10 @@ td small {
   .branch-grid,
   .quality-grid,
   .form-grid,
-  .export-grid {
+  .export-grid,
+  .guide-summary,
+  .mini-grid,
+  .example-grid {
     grid-template-columns: 1fr;
   }
 
