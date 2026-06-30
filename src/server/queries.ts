@@ -22,6 +22,19 @@ async function settings() {
   return Object.fromEntries(rows.map((row) => [row.key, row.value]));
 }
 
+function publicSettings(map: Record<string, string>) {
+  const output = { ...map };
+  for (const key of Object.keys(output)) {
+    if (key.includes("api_key")) {
+      output[`${key}_configured`] = output[key] ? "true" : "false";
+      output[key] = "";
+    }
+  }
+  if (process.env.GROQ_API_KEY) output.groq_api_key_configured = "true";
+  if (process.env.GROQ_MODEL) output.groq_model = process.env.GROQ_MODEL;
+  return output;
+}
+
 function scoreSettings(map: Record<string, string>) {
   return {
     monthlyConversionGoalPerAdvisor:
@@ -359,7 +372,7 @@ export async function buildAppState(year?: number, month?: number) {
     imports,
     quality,
     recommendations,
-    settings: settingMap,
+    settings: publicSettings(settingMap),
     boardReports: {
       byBranch: branches,
       byAdvisor: advisors.slice().sort((a, b) => b.sales - a.sales),

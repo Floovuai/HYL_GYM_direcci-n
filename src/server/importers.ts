@@ -36,7 +36,7 @@ const DEFAULT_SETTINGS: Record<string, string> = {
   evo_base_url: "",
   evo_api_key: "",
   groq_api_key: "",
-  groq_model: process.env.GROQ_MODEL || "llama-3.1-70b-versatile",
+  groq_model: process.env.GROQ_MODEL || "llama-3.3-70b-versatile",
   selected_year: "2026",
   selected_month: "6"
 };

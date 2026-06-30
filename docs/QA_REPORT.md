@@ -25,6 +25,9 @@ Fecha: 2026-06-30
 - `/api/health`: API responde con ventas cargadas.
 - `/api/state`: KPI, scores, comisiones, QA y recomendaciones disponibles.
 - `/api/quality/duplicates?year=2026&month=6`: estado `OK`, sin grupos duplicados.
+- `/api/ai/health`: Groq responde `OK` con `llama-3.3-70b-versatile`.
+- `/api/ai/ask`: consulta comercial real responde con acciones priorizadas sobre duplicados, score, metas y ventas.
+- UI Direccion: muestra `Groq: configurado`, no expone patron de token `gsk_` en DOM ni inputs.
 - Subida del mismo Excel de ventas por API: 0 ventas nuevas, 3.622 duplicados omitidos, total de ventas sin cambios.
 - QA visual desktop: navegacion por Dashboard, Asesores, Sedes, Marketing, Informes, Direccion y To Do.
 - QA visual movil 390x844: sin desbordamiento horizontal y paneles consultables.

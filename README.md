@@ -51,12 +51,20 @@ Cada escritura se hace en transaccion y se persiste al archivo SQLite.
 
 ## IA Groq
 
-En Direccion > Integraciones configura:
+La clave recomendada vive en `.env` y no se publica en GitHub:
 
-- `GROQ API key`
-- `Modelo GROQ`
+```text
+GROQ_API_KEY=...
+GROQ_MODEL=llama-3.3-70b-versatile
+```
 
-El contexto enviado a Groq incluye KPI, sedes, asesores, planes, reporte de duplicados y recomendaciones del sistema.
+La interfaz muestra `Groq: configurado` sin exponer el token. El contexto enviado a Groq incluye KPI, sedes, asesores, planes, reporte de duplicados y recomendaciones del sistema.
+
+Verificacion rapida:
+
+```text
+http://localhost:4310/api/ai/health
+```
 
 ## Verificacion
 

@@ -538,12 +538,23 @@ function ReportTable({ title, rows, columns }: { title: string; rows: any[]; col
 function Direction({ state, year, month, onReload, setNotice }: { state: AppState; year: number; month: number; onReload: () => Promise<void>; setNotice: (value: string) => void }) {
   const [settings, setSettings] = React.useState({
     evo_base_url: state.settings.evo_base_url || "",
-    evo_api_key: state.settings.evo_api_key || "",
-    groq_api_key: state.settings.groq_api_key || "",
-    groq_model: state.settings.groq_model || "llama-3.1-70b-versatile"
+    evo_api_key: "",
+    groq_api_key: "",
+    groq_model: state.settings.groq_model || "llama-3.3-70b-versatile"
   });
   const [prompt, setPrompt] = React.useState("Verifica duplicados, calidad de datos y dame 5 acciones comerciales para mejorar el rendimiento de asesores y sedes.");
   const [answer, setAnswer] = React.useState("");
+  const groqConfigured = state.settings.groq_api_key_configured === "true";
+  const evoConfigured = state.settings.evo_api_key_configured === "true";
+
+  React.useEffect(() => {
+    setSettings({
+      evo_base_url: state.settings.evo_base_url || "",
+      evo_api_key: "",
+      groq_api_key: "",
+      groq_model: state.settings.groq_model || "llama-3.3-70b-versatile"
+    });
+  }, [state.settings.evo_base_url, state.settings.groq_model]);
 
   async function saveSettings() {
     await fetch("/api/settings", {
@@ -593,9 +604,13 @@ function Direction({ state, year, month, onReload, setNotice }: { state: AppStat
           <div className="panel-title"><h2>Integraciones</h2><Settings size={18} /></div>
           <div className="form-grid">
             <input value={settings.evo_base_url} onChange={(event) => setSettings({ ...settings, evo_base_url: event.target.value })} placeholder="EVO URL" />
-            <input value={settings.evo_api_key} onChange={(event) => setSettings({ ...settings, evo_api_key: event.target.value })} placeholder="EVO API key" type="password" />
-            <input value={settings.groq_api_key} onChange={(event) => setSettings({ ...settings, groq_api_key: event.target.value })} placeholder="GROQ API key" type="password" />
+            <input value={settings.evo_api_key} onChange={(event) => setSettings({ ...settings, evo_api_key: event.target.value })} placeholder={evoConfigured ? "EVO API key configurada" : "EVO API key"} type="password" />
+            <input value={settings.groq_api_key} onChange={(event) => setSettings({ ...settings, groq_api_key: event.target.value })} placeholder={groqConfigured ? "GROQ API key configurada" : "GROQ API key"} type="password" />
             <input value={settings.groq_model} onChange={(event) => setSettings({ ...settings, groq_model: event.target.value })} placeholder="Modelo GROQ" />
+          </div>
+          <div className="integration-status">
+            <span>Groq: {groqConfigured ? "configurado" : "pendiente"}</span>
+            <span>EVO: {evoConfigured ? "configurado" : "pendiente"}</span>
           </div>
           <div className="button-row">
             <button onClick={saveSettings}>Guardar</button>

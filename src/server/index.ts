@@ -30,10 +30,54 @@ const upload = multer({
 app.use(cors());
 app.use(express.json({ limit: "3mb" }));
 
+function publicSettingRow(row: { key: string; value: string; secret?: number; updated_at?: string }) {
+  const configured = row.secret ? Boolean(row.value) || Boolean(row.key === "groq_api_key" && process.env.GROQ_API_KEY) : undefined;
+  return {
+    ...row,
+    value: row.secret ? "" : row.value,
+    configured
+  };
+}
+
+async function integrationSettings() {
+  const rows = await all<{ key: string; value: string }>("SELECT key, value FROM settings");
+  const settings = Object.fromEntries(rows.map((row) => [row.key, row.value]));
+  return {
+    ...settings,
+    groq_api_key: String(process.env.GROQ_API_KEY || settings.groq_api_key || "").trim(),
+    groq_model: String(process.env.GROQ_MODEL || settings.groq_model || "llama-3.3-70b-versatile").trim()
+  };
+}
+
+async function askGroq(apiKey: string, model: string, messages: Array<{ role: "system" | "user"; content: string }>, maxTokens = 900) {
+  const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      model,
+      temperature: 0.3,
+      max_tokens: maxTokens,
+      messages
+    })
+  });
+  const json = await response.json();
+  return { response, json };
+}
+
 app.get("/api/health", async (_req, res, next) => {
   try {
     const sales = await scalar<number>("SELECT COUNT(*) FROM sales");
-    res.json({ ok: true, salesRows: sales ?? 0, now: new Date().toISOString() });
+    const settings = await integrationSettings();
+    res.json({
+      ok: true,
+      salesRows: sales ?? 0,
+      groqConfigured: Boolean(settings.groq_api_key),
+      groqModel: settings.groq_model,
+      now: new Date().toISOString()
+    });
   } catch (error) {
     next(error);
   }
@@ -61,8 +105,8 @@ app.get("/api/quality/duplicates", async (req, res, next) => {
 
 app.get("/api/settings", async (_req, res, next) => {
   try {
-    const rows = await all("SELECT key, value, secret, updated_at FROM settings ORDER BY key");
-    res.json(rows);
+    const rows = await all<{ key: string; value: string; secret?: number; updated_at?: string }>("SELECT key, value, secret, updated_at FROM settings ORDER BY key");
+    res.json(rows.map(publicSettingRow));
   } catch (error) {
     next(error);
   }
@@ -78,11 +122,13 @@ app.put("/api/settings", async (req, res, next) => {
     await transaction(async () => {
       for (const [key, value] of Object.entries(values)) {
         const secret = key.includes("api_key") ? 1 : 0;
+        const textValue = String(value ?? "").trim();
+        if (secret && !textValue) continue;
         await run(
           `INSERT INTO settings (key, value, secret, updated_at)
            VALUES (?, ?, ?, CURRENT_TIMESTAMP)
            ON CONFLICT(key) DO UPDATE SET value=excluded.value, secret=excluded.secret, updated_at=CURRENT_TIMESTAMP`,
-          [key, String(value ?? ""), secret]
+          [key, textValue, secret]
         );
       }
     });
@@ -167,11 +213,9 @@ app.post("/api/evo/sync", async (_req, res, next) => {
 
 app.post("/api/ai/ask", async (req, res, next) => {
   try {
-    const settings = Object.fromEntries(
-      (await all<{ key: string; value: string }>("SELECT key, value FROM settings")).map((row) => [row.key, row.value])
-    );
+    const settings = await integrationSettings();
     const apiKey = String(settings.groq_api_key || "").trim();
-    const model = String(settings.groq_model || "llama-3.1-70b-versatile").trim();
+    const model = String(settings.groq_model || "llama-3.3-70b-versatile").trim();
     const prompt = String(req.body?.prompt || "").trim();
     if (!apiKey) {
       res.status(400).json({ error: "Configura groq_api_key primero" });
@@ -182,45 +226,59 @@ app.post("/api/ai/ask", async (req, res, next) => {
       return;
     }
     const state = await buildAppState(Number(req.body?.year) || undefined, Number(req.body?.month) || undefined);
-    const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json"
+    const { response, json } = await askGroq(apiKey, model, [
+      {
+        role: "system",
+        content:
+          "Eres un analista comercial senior de HYL Gym. Responde en espanol, con acciones concretas y priorizadas. Debes revisar calidad de datos, duplicados, score, metas, comisiones y rendimiento de asesores/sedes antes de sugerir acciones. Usa solo los datos entregados; no inventes cifras."
       },
-      body: JSON.stringify({
-        model,
-        temperature: 0.3,
-        messages: [
-          {
-            role: "system",
-            content:
-              "Eres un analista comercial senior de HYL Gym. Responde en espanol, con acciones concretas y priorizadas. Debes revisar calidad de datos, duplicados, score, metas, comisiones y rendimiento de asesores/sedes antes de sugerir acciones. Usa solo los datos entregados; no inventes cifras."
-          },
-          {
-            role: "user",
-            content: JSON.stringify({
-              prompt,
-              contexto: {
-                filtros: state.filters,
-                kpis: state.kpis,
-                calidadDatos: state.quality,
-                recomendacionesSistema: state.recommendations,
-                sedes: state.branches,
-                asesores: state.advisors.slice(0, 20),
-                planes: state.plans.slice(0, 20)
-              }
-            })
+      {
+        role: "user",
+        content: JSON.stringify({
+          prompt,
+          contexto: {
+            filtros: state.filters,
+            kpis: state.kpis,
+            calidadDatos: state.quality,
+            recomendacionesSistema: state.recommendations,
+            sedes: state.branches,
+            asesores: state.advisors.slice(0, 20),
+            planes: state.plans.slice(0, 20)
           }
-        ]
-      })
-    });
-    const json = await response.json();
+        })
+      }
+    ]);
     if (!response.ok) {
       res.status(response.status).json({ error: json?.error?.message || "Groq no pudo responder" });
       return;
     }
     res.json({ ok: true, answer: json.choices?.[0]?.message?.content ?? "" });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/ai/health", async (_req, res, next) => {
+  try {
+    const settings = await integrationSettings();
+    if (!settings.groq_api_key) {
+      res.status(400).json({ ok: false, error: "GROQ_API_KEY no configurada" });
+      return;
+    }
+    const { response, json } = await askGroq(
+      settings.groq_api_key,
+      settings.groq_model,
+      [
+        { role: "system", content: "Responde solo con OK." },
+        { role: "user", content: "Prueba de conexion HYL Gym" }
+      ],
+      20
+    );
+    if (!response.ok) {
+      res.status(response.status).json({ ok: false, model: settings.groq_model, error: json?.error?.message || "Groq no pudo responder" });
+      return;
+    }
+    res.json({ ok: true, model: settings.groq_model, answer: json.choices?.[0]?.message?.content ?? "" });
   } catch (error) {
     next(error);
   }

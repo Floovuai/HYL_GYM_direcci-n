@@ -431,6 +431,21 @@ td small {
   min-height: 34px;
 }
 
+.integration-status {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.integration-status span {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 5px 9px;
+  background: var(--panel-strong);
+}
+
 .link-button {
   border: 0;
   background: transparent;

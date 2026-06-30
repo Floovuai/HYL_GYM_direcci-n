@@ -66,10 +66,20 @@ El sincronizador acepta una lista directa o propiedades `data` / `sales`.
 
 ## Groq
 
-En Direccion > Integraciones:
+Configuracion recomendada en `.env`:
 
-- `GROQ API key`
-- `Modelo GROQ`
+```text
+GROQ_API_KEY=...
+GROQ_MODEL=llama-3.3-70b-versatile
+```
 
 El asistente usa los KPI y rankings filtrados por ano/mes.
 Tambien recibe el reporte de calidad de datos, duplicados y recomendaciones comerciales calculadas por la plataforma.
+
+La pantalla Direccion > Integraciones muestra el estado de Groq sin devolver la clave cruda al navegador. Si se deja el campo `GROQ API key` vacio al guardar integraciones, la clave existente no se borra.
+
+Healthcheck:
+
+```text
+http://localhost:4310/api/ai/health
+```

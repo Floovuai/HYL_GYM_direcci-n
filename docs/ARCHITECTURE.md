@@ -10,7 +10,7 @@ Plataforma local full stack para direccion comercial de HYL Gym. Centraliza vent
 - Backend: Node.js + Express + TypeScript.
 - Base de datos: SQLite persistente con `sql.js`, guardado en `data/hyl_gym.db`.
 - Importacion: Excel compatible con el formato de `VENTAS GENERALES.xlsx`; sincronizacion JSON generica para API EVO.
-- IA: endpoint Groq compatible con Chat Completions.
+- IA: endpoint Groq compatible con Chat Completions, configurado por `.env`.
 
 ## Flujo de datos
 
@@ -40,4 +40,4 @@ La carga de ventas es incremental: no borra meses existentes. Si una fila ya exi
 
 ## Seguridad local
 
-La app esta pensada para red local. Las claves EVO/Groq se guardan en SQLite. Para una version multiusuario se recomienda agregar autenticacion, cifrado de secretos y roles por perfil.
+La app esta pensada para red local. Groq se lee desde `GROQ_API_KEY` en `.env`, archivo ignorado por Git. Las claves configuradas desde UI quedan marcadas como secretas en SQLite y no se devuelven crudas en `/api/state`. Para una version multiusuario se recomienda agregar autenticacion, cifrado de secretos y roles por perfil.
