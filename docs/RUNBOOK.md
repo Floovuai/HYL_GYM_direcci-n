@@ -12,7 +12,7 @@ npm install
 npm run db:reset
 ```
 
-Esto crea `data/hyl_gym.db` con ventas junio 2026, metas julio-diciembre 2026, planes, precios, campanas y tareas iniciales.
+Esto crea `data/hyl_gym.db` con ventas junio 2026, metas historicas enero-junio, metas julio-diciembre 2026, planes, precios, campanas y tareas iniciales.
 
 ## Desarrollo
 
@@ -76,7 +76,7 @@ La opcion de Groq es independiente y solo se incluye cuando se marca. El PDF se 
 
 ## API EVO
 
-En Direccion > Integraciones:
+En `Configuracion > Integraciones`:
 
 - `URL EVO`: endpoint que devuelva JSON.
 - `Clave API EVO`: token bearer opcional.
@@ -95,7 +95,7 @@ GROQ_MODEL=llama-3.3-70b-versatile
 El asistente usa los KPI y rankings filtrados por ano/mes.
 Tambien recibe el reporte de calidad de datos, duplicados y recomendaciones comerciales calculadas por la plataforma.
 
-La pantalla Direccion > Integraciones muestra el estado de Groq sin devolver la clave cruda al navegador. Si se deja el campo `Clave API Groq` vacio al guardar integraciones, la clave existente no se borra.
+La pantalla `Configuracion > Integraciones` muestra el estado de Groq sin devolver la clave cruda al navegador. Si se deja el campo `Clave API Groq` vacio al guardar integraciones, la clave existente no se borra.
 
 Healthcheck:
 

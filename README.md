@@ -1,6 +1,6 @@
-# HYL Gym Direccion Comercial
+# HYL Gym Dirección Comercial
 
-Plataforma local para gestionar ventas, metas, scores, comisiones, mercadeo, informes gerenciales, direccion y tareas operativas de HYL Gym.
+Plataforma local para gestionar ventas, metas, scores, comisiones, mercadeo, informes gerenciales, dirección, configuración y tareas operativas de HYL Gym.
 
 ## Iniciar
 
@@ -39,6 +39,8 @@ Usa el boton **Excel** de la barra superior. El importador:
 - Conserva datos semilla y datos historicos.
 - Registra cada carga en `import_batches`.
 
+La lectura de libros semilla usa hojas por nombre, por lo que integra correctamente `META 2026`, `PRECIOS`, `ESTRATEGIAS`, `PLANES PREVENTAS` y `BONIFICACION 2026`.
+
 ## Base de datos
 
 La informacion se guarda en:
@@ -76,6 +78,8 @@ GROQ_MODEL=llama-3.3-70b-versatile
 ```
 
 La interfaz muestra `Groq: configurado` sin exponer el token. El contexto enviado a Groq incluye KPI, sedes, asesores, planes, reporte de duplicados y recomendaciones del sistema.
+
+La configuración se gestiona en `Configuración > Integraciones`. La explicación de comisiones vive en `Configuración > Mecánica de comisiones`.
 
 Verificacion rapida:
 

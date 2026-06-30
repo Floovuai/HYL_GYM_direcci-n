@@ -1,10 +1,24 @@
 # Comisiones y score
 
-En la plataforma, esta mecanica esta disponible en `Direccion > Configuracion de la plataforma > Mecanica de comisiones`.
+En la plataforma, esta mecanica esta disponible en `Configuracion > Mecanica de comisiones`.
 
 ## Asesores
 
-Niveles del Excel:
+La plataforma separa dos esquemas:
+
+- Enero-junio 2026: bonificacion historica del archivo `BONIFICACION 2026`, sin multiplicadores de valoracion.
+- Julio 2026 en adelante: esquema de rendimiento con activacion/bronce/plata y multiplicadores de calidad/gestion.
+
+### Enero-junio 2026
+
+| Nivel | Condicion | Comision |
+| --- | --- | --- |
+| Meta 1 | 100% de Meta 1 asesor | 0.40% |
+| Meta 2 | 100% de Meta 2 asesor | 0.80% |
+| Meta 3 | 100% de Meta 3 asesor | 1.20% |
+| Meta 4 | 100% de Meta 4 asesor | 2.00% + 500.000 |
+
+### Julio 2026 en adelante
 
 | Nivel | Condicion | Comision |
 | --- | --- | --- |
@@ -20,7 +34,8 @@ Formula:
 
 ```text
 comision_base = ventas * porcentaje + bono_fijo
-comision_final = comision_base * multiplicador_calidad * multiplicador_gestion
+comision_final_julio_en_adelante = comision_base * multiplicador_calidad * multiplicador_gestion
+comision_final_enero_junio = comision_base
 ```
 
 Multiplicadores:
@@ -33,6 +48,8 @@ Multiplicadores:
 | Excelente | 100 | 1.15 |
 
 ## Score asesores
+
+El score es acumulativo por componentes ponderados del periodo filtrado:
 
 ```text
 score = puntaje_meta1 * 40%

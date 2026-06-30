@@ -59,6 +59,22 @@ describe("mecanica comercial HYL", () => {
     expect(result.finalCommission).toBe(5_175_000);
   });
 
+  it("liquida enero-junio 2026 con bonificacion historica sin valoraciones", () => {
+    const result = calculateAdvisorCommission(
+      {
+        sales: 100_000_000,
+        target: { ...advisorTarget, meta1: 100_000_000, meta2: 120_000_000, meta3: 140_000_000, meta4: 160_000_000 },
+        evaluation: { qualityRating: "Excelente", adminRating: "Excelente" }
+      },
+      { year: 2026, month: 6 }
+    );
+
+    expect(result.level).toBe("Meta 1");
+    expect(result.rate).toBe(0.004);
+    expect(result.usesEvaluation).toBe(false);
+    expect(result.finalCommission).toBe(400_000);
+  });
+
   it("no liquida comision cuando no alcanza activacion", () => {
     const result = calculateAdvisorCommission({ sales: 50, target: advisorTarget });
     expect(result.level).toBe("Sin comision");

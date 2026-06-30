@@ -32,8 +32,8 @@
 
 ## Epica 5: Direccion e IA
 
-- Configuracion EVO.
-- Configuracion Groq.
+- Direccion: comisiones, requerimientos, planes e ideas.
+- Configuracion: EVO, Groq y mecanica de comisiones.
 - Ideas y requerimientos asistidos por IA.
 - Hoja de ruta operativa.
 
@@ -43,7 +43,7 @@
 
 - Validar importacion con 2 archivos reales adicionales.
 - Confirmar contrato final de API EVO.
-- Cargar metas enero-junio 2026.
+- Validar metas historicas enero-junio 2026 ya integradas desde `META 2026`.
 - Revisar alias faltantes de asesores.
 
 ### Semana 2

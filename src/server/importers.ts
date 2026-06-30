@@ -1,13 +1,12 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
-import readXlsxFile from "read-excel-file/node";
+import { readSheet } from "read-excel-file/node";
 import { cleanDisplay, monthNumber, normalizeKey, ratingMultiplier, ratingScore } from "../shared/business";
 import { all, get, run, scalar, transaction } from "./db";
 
 type CellValue = string | number | Date | boolean | null | undefined;
 type SheetRow = CellValue[];
-type WorkbookSheet = { sheet: string; data: SheetRow[] };
 
 export interface SeedPaths {
   salesXlsx?: string;
@@ -97,15 +96,7 @@ function saleKey(input: {
 }
 
 async function loadSheet(filePath: string, sheet?: string) {
-  const result = (await readXlsxFile(filePath)) as unknown;
-  if (Array.isArray(result) && result.length && typeof result[0] === "object" && result[0] !== null && "data" in result[0]) {
-    const sheets = result as WorkbookSheet[];
-    if (!sheet) return sheets[0]?.data ?? [];
-    const found = sheets.find((item) => normalizeKey(item.sheet) === normalizeKey(sheet));
-    if (!found) throw new Error(`Hoja no encontrada: ${sheet}`);
-    return found.data;
-  }
-  return result as SheetRow[];
+  return (await readSheet(filePath, sheet ?? 1)) as SheetRow[];
 }
 
 async function loadOptionalSheet(filePath: string, sheet: string) {

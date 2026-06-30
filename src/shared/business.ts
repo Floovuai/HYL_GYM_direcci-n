@@ -46,6 +46,25 @@ const COMMISSION_RATES: Record<CommissionLevel, { rate: number; fixedBonus: numb
   "Meta 4": { rate: 0.02, fixedBonus: 500000 }
 };
 
+const HISTORICAL_COMMISSION_RATES: Record<CommissionLevel, { rate: number; fixedBonus: number }> = {
+  "Sin venta": { rate: 0, fixedBonus: 0 },
+  "Sin comision": { rate: 0, fixedBonus: 0 },
+  Activacion: { rate: 0, fixedBonus: 0 },
+  Bronce: { rate: 0, fixedBonus: 0 },
+  Plata: { rate: 0, fixedBonus: 0 },
+  "Meta 1": { rate: 0.004, fixedBonus: 0 },
+  "Meta 2": { rate: 0.008, fixedBonus: 0 },
+  "Meta 3": { rate: 0.012, fixedBonus: 0 },
+  "Meta 4": { rate: 0.02, fixedBonus: 500000 }
+};
+
+export function commissionSchemeForPeriod(year?: number, month?: number) {
+  if (year === 2026 && (month ?? 0) > 0 && (month ?? 0) <= 6) {
+    return "historico_enero_junio_2026" as const;
+  }
+  return "rendimiento_julio_2026" as const;
+}
+
 export function monthName(month: number): MonthName {
   return MONTHS[Math.max(0, Math.min(11, month - 1))];
 }
@@ -132,28 +151,41 @@ function boundedScore(value: number): number {
   return Math.max(0, Math.min(100, value));
 }
 
-function chooseAdvisorLevel(sales: number, target?: AdvisorMetricInput["target"]): CommissionLevel {
+function chooseAdvisorLevel(
+  sales: number,
+  target?: AdvisorMetricInput["target"],
+  scheme: ReturnType<typeof commissionSchemeForPeriod> = "rendimiento_julio_2026"
+): CommissionLevel {
   if (sales <= 0) return "Sin venta";
   if (!target) return "Sin comision";
   if (sales >= target.meta4) return "Meta 4";
   if (sales >= target.meta3) return "Meta 3";
   if (sales >= target.meta2) return "Meta 2";
   if (sales >= target.meta1) return "Meta 1";
+  if (scheme === "historico_enero_junio_2026") return "Sin comision";
   if (sales >= target.silver) return "Plata";
   if (sales >= target.bronze) return "Bronce";
   if (sales >= target.activation) return "Activacion";
   return "Sin comision";
 }
 
-export function calculateAdvisorCommission(input: AdvisorMetricInput): AdvisorCommission {
+export function calculateAdvisorCommission(
+  input: AdvisorMetricInput,
+  period?: { year?: number; month?: number }
+): AdvisorCommission {
   const sales = Math.max(0, input.sales || 0);
   const target = input.target ?? null;
-  const level = chooseAdvisorLevel(sales, target);
-  const rate = COMMISSION_RATES[level].rate;
-  const fixedBonus = COMMISSION_RATES[level].fixedBonus;
+  const scheme = commissionSchemeForPeriod(period?.year, period?.month);
+  const rates = scheme === "historico_enero_junio_2026" ? HISTORICAL_COMMISSION_RATES : COMMISSION_RATES;
+  const level = chooseAdvisorLevel(sales, target, scheme);
+  const rate = rates[level].rate;
+  const fixedBonus = rates[level].fixedBonus;
   const baseCommission = sales * rate + fixedBonus;
   const evaluation = resolveEvaluation(input.evaluation);
-  const finalCommission = baseCommission * evaluation.qualityMultiplier * evaluation.adminMultiplier;
+  const usesEvaluation = scheme === "rendimiento_julio_2026";
+  const finalCommission = usesEvaluation
+    ? baseCommission * evaluation.qualityMultiplier * evaluation.adminMultiplier
+    : baseCommission;
   const progressMeta1 = progress(sales, target?.meta1);
   const missingMeta1 = Math.max((target?.meta1 ?? 0) - sales, 0);
   const missingMeta4 = Math.max((target?.meta4 ?? 0) - sales, 0);
@@ -169,7 +201,9 @@ export function calculateAdvisorCommission(input: AdvisorMetricInput): AdvisorCo
     progressMeta1,
     missingMeta1,
     missingMeta4,
-    status
+    status,
+    scheme,
+    usesEvaluation
   };
 }
 

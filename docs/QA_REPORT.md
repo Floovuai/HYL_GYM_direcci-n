@@ -6,6 +6,8 @@ Fecha: 2026-06-30
 
 - Ventas cargadas: 3.622
 - Total ventas junio 2026: 698.942.500 COP
+- Comisiones asesores junio 2026: 4.200.530 COP
+- Comision director junio 2026: 500.000 COP
 - Sedes: 8
 - Asesores: 19
 - Planes: 45
@@ -19,7 +21,7 @@ Fecha: 2026-06-30
 
 - `npm run db:reset`: base inicial creada desde Excel semilla.
 - `npm run seed`: reimportacion idempotente, sin duplicar ventas.
-- `npm test`: reglas de comisiones y score.
+- `npm test`: reglas de comisiones y score, incluyendo bonificacion historica enero-junio 2026.
 - `npm run build`: TypeScript + build frontend.
 - `npm audit`: 0 vulnerabilidades.
 - `/api/health`: API responde con ventas cargadas.
@@ -27,14 +29,17 @@ Fecha: 2026-06-30
 - `/api/quality/duplicates?year=2026&month=6`: estado `OK`, sin grupos duplicados.
 - `/api/ai/health`: Groq responde `OK` con `llama-3.3-70b-versatile`.
 - `/api/ai/ask`: consulta comercial real responde con acciones priorizadas sobre duplicados, score, metas y ventas.
-- UI Direccion: muestra `Groq: configurado`, no expone patron de token `gsk_` en DOM ni inputs.
-- UI Direccion > Configuracion: subpestana `Mecanica de comisiones` explica asesores, multiplicadores y bonos de director.
+- UI Direccion: separada de Configuracion; contiene comisiones, requerimientos, planes, ideas y apoyo comercial.
+- UI Configuracion > Integraciones: muestra `Groq: configurado`, no expone patron de token `gsk_` en DOM ni inputs.
+- UI Configuracion > Mecanica de comisiones: explica bonificacion historica enero-junio, nuevo esquema desde julio, multiplicadores y bonos de director.
 - `/api/export/gerencial.pdf`: descarga PDF gerencial con secciones seleccionables.
 - `/api/export/gerencial.pdf&includeGroq=1`: descarga PDF con sugerencias Groq, sin exponer token.
 - Render PDF con Poppler: portada, graficos, tablas diarias/mensuales/anuales y saltos de pagina revisados visualmente.
 - Subida del mismo Excel de ventas por API: 0 ventas nuevas, 3.622 duplicados omitidos, total de ventas sin cambios.
-- QA visual desktop: navegacion por Tablero, Asesores, Sedes, Mercadeo, Informes gerenciales, Direccion y Tareas.
-- QA visual movil 390x844: sin desbordamiento horizontal y paneles consultables.
+- QA visual desktop 1280px: Tablero sin desbordamiento horizontal; nombres de sedes visibles; nombres de asesores formateados; score visible junto a barras.
+- QA visual Asesores: tarjetas sin scroll horizontal con ventas mes/ano, meta diaria, meta mes, meta anual, Meta 1-4, porcentaje de avance y faltante.
+- QA visual Direccion/Configuracion: rutas separadas y sin campos de configuracion dentro de Direccion.
+- QA visual movil 390x844: sin desbordamiento horizontal; menu responsive sin scroll horizontal; paneles y tarjetas consultables.
 
 ## Resultado
 

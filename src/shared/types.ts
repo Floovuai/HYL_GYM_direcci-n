@@ -78,6 +78,8 @@ export interface AdvisorCommission {
   missingMeta1: number;
   missingMeta4: number;
   status: string;
+  scheme: "historico_enero_junio_2026" | "rendimiento_julio_2026";
+  usesEvaluation: boolean;
 }
 
 export interface AdvisorScore {

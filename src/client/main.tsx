@@ -23,6 +23,7 @@ import {
   BarChart,
   CartesianGrid,
   Cell,
+  LabelList,
   Line,
   LineChart as ReLineChart,
   ResponsiveContainer,
@@ -32,7 +33,7 @@ import {
 } from "recharts";
 import "./styles.css";
 
-type TabId = "dashboard" | "advisors" | "branches" | "marketing" | "board" | "direction" | "todos";
+type TabId = "dashboard" | "advisors" | "branches" | "marketing" | "board" | "direction" | "settings" | "todos";
 
 type AppState = any;
 
@@ -42,7 +43,8 @@ const tabs: Array<{ id: TabId; label: string; icon: React.ElementType }> = [
   { id: "branches", label: "Sedes", icon: Building2 },
   { id: "marketing", label: "Mercadeo", icon: Megaphone },
   { id: "board", label: "Informes gerenciales", icon: ClipboardList },
-  { id: "direction", label: "Dirección", icon: Settings },
+  { id: "direction", label: "Dirección", icon: Sparkles },
+  { id: "settings", label: "Configuración", icon: Settings },
   { id: "todos", label: "Tareas", icon: CheckSquare }
 ];
 
@@ -79,6 +81,87 @@ function ratePercent(value: number) {
 
 function compact(value: number) {
   return new Intl.NumberFormat("es-CO", { notation: "compact", maximumFractionDigits: 1 }).format(Number(value || 0));
+}
+
+function safeRatio(numerator: number, denominator?: number | null) {
+  if (!denominator || denominator <= 0) return 0;
+  return Number(numerator || 0) / denominator;
+}
+
+function titleCase(value: string) {
+  return String(value || "")
+    .toLocaleLowerCase("es-CO")
+    .replace(/\b([a-záéíóúñü])/g, (letter) => letter.toLocaleUpperCase("es-CO"));
+}
+
+function advisorDisplayName(value: string) {
+  return titleCase(value).replace(/\s+/g, " ").trim();
+}
+
+function advisorChartName(value: string) {
+  const parts = advisorDisplayName(value).split(" ").filter(Boolean);
+  if (parts.length <= 2) return parts.join(" ");
+  if (parts.length === 3) return `${parts[0]} ${parts[2]}`;
+  return `${parts[0]} ${parts[2]} ${parts[3]}`.trim();
+}
+
+function branchShortName(value: string) {
+  const name = String(value || "");
+  const map: Record<string, string> = {
+    "Buenos Aires": "Buenos\nAires",
+    "Santa Matilde": "Santa\nMatilde",
+    "Prado Veraniego": "Prado\nVeraniego",
+    "Villavicencio": "Villavicencio",
+    "Colors 162": "Colors 162",
+    "Calle 109": "Calle 109",
+    Modelia: "Modelia",
+    Online: "Online"
+  };
+  return map[name] || name;
+}
+
+function scoreValue(score: any) {
+  return score?.score === null || score?.score === undefined ? "Pendiente" : Math.round(score.score).toString();
+}
+
+function nextAdvisorGoal(advisor: any) {
+  const target = advisor.target;
+  if (!target) return { label: "Sin meta", amount: 0, missing: 0, progress: 0 };
+  const goals = [
+    { label: "Meta 1", amount: target.meta1 },
+    { label: "Meta 2", amount: target.meta2 },
+    { label: "Meta 3", amount: target.meta3 },
+    { label: "Meta 4", amount: target.meta4 }
+  ];
+  const next = goals.find((goal) => advisor.sales < goal.amount) || goals[goals.length - 1];
+  return {
+    ...next,
+    missing: Math.max(next.amount - advisor.sales, 0),
+    progress: safeRatio(advisor.sales, next.amount)
+  };
+}
+
+function SplitTick({ x, y, payload }: any) {
+  const lines = String(payload.value || "").split("\n");
+  return (
+    <g transform={`translate(${x},${y + 8})`}>
+      <text textAnchor="middle" fill="#4d554f" fontSize={11}>
+        {lines.map((line, index) => (
+          <tspan key={line} x={0} dy={index === 0 ? 0 : 13}>{line}</tspan>
+        ))}
+      </text>
+    </g>
+  );
+}
+
+function AdvisorTick({ x, y, payload }: any) {
+  return (
+    <g transform={`translate(${x - 8},${y})`}>
+      <text textAnchor="end" fill="#4d554f" fontSize={11}>
+        {String(payload.value || "")}
+      </text>
+    </g>
+  );
 }
 
 function scoreClass(status?: string) {
@@ -256,6 +339,7 @@ function App() {
             {tab === "marketing" && <Marketing state={state} onReload={load} />}
             {tab === "board" && <BoardReports state={state} year={year} month={month} />}
             {tab === "direction" && <Direction state={state} year={year} month={month} onReload={load} setNotice={setNotice} />}
+            {tab === "settings" && <Configuration state={state} onReload={load} setNotice={setNotice} />}
             {tab === "todos" && <Todos state={state} onReload={load} />}
             {exportOpen ? <ExportDialog state={state} year={year} month={month} onClose={() => setExportOpen(false)} /> : null}
           </>
@@ -343,8 +427,15 @@ function ExportDialog({ state, year, month, onClose }: { state: AppState; year: 
 }
 
 function Dashboard({ state }: { state: AppState }) {
-  const branchChart = state.branches.slice(0, 8);
-  const advisorChart = state.advisors.slice(0, 10);
+  const branchChart = state.branches.slice(0, 8).map((branch: any) => ({
+    ...branch,
+    chartName: branchShortName(branch.name)
+  }));
+  const advisorChart = state.advisors.slice(0, 10).map((advisor: any) => ({
+    ...advisor,
+    chartName: advisorChartName(advisor.name),
+    scoreText: `Score ${scoreValue(advisor.score)}`
+  }));
   return (
     <div className="view">
       <div className="kpi-grid">
@@ -360,11 +451,11 @@ function Dashboard({ state }: { state: AppState }) {
             <h2>Ventas por sede</h2>
             <Building2 size={18} />
           </div>
-          <ResponsiveContainer width="100%" height={300}>
-            <BarChart data={branchChart}>
+          <ResponsiveContainer width="100%" height={330}>
+            <BarChart data={branchChart} margin={{ top: 8, right: 8, bottom: 26, left: 0 }}>
               <CartesianGrid strokeDasharray="3 3" vertical={false} />
-              <XAxis dataKey="name" tick={{ fontSize: 11 }} />
-              <YAxis tickFormatter={compact} width={44} />
+              <XAxis dataKey="chartName" interval={0} tick={<SplitTick />} height={48} />
+              <YAxis tickFormatter={compact} width={58} />
               <Tooltip formatter={(value) => currency(Number(value))} />
               <Bar dataKey="sales" radius={[4, 4, 0, 0]}>
                 {branchChart.map((_: any, index: number) => (
@@ -380,13 +471,15 @@ function Dashboard({ state }: { state: AppState }) {
             <h2>Top asesores</h2>
             <Users size={18} />
           </div>
-          <ResponsiveContainer width="100%" height={300}>
-            <BarChart data={advisorChart} layout="vertical" margin={{ left: 12, right: 16 }}>
+          <ResponsiveContainer width="100%" height={340}>
+            <BarChart data={advisorChart} layout="vertical" margin={{ top: 6, left: 52, right: 78, bottom: 8 }}>
               <CartesianGrid strokeDasharray="3 3" horizontal={false} />
-              <XAxis type="number" tickFormatter={compact} />
-              <YAxis dataKey="name" type="category" width={112} tick={{ fontSize: 10 }} />
-              <Tooltip formatter={(value) => currency(Number(value))} />
-              <Bar dataKey="sales" fill="#18715c" radius={[0, 4, 4, 0]} />
+              <XAxis type="number" tickFormatter={compact} domain={[0, (dataMax: number) => Math.ceil(dataMax * 1.16)]} />
+              <YAxis dataKey="chartName" type="category" width={168} interval={0} tick={<AdvisorTick />} />
+              <Tooltip formatter={(value) => currency(Number(value))} labelFormatter={(_, payload) => advisorDisplayName(payload?.[0]?.payload?.name || "")} />
+              <Bar dataKey="sales" fill="#18715c" radius={[0, 4, 4, 0]}>
+                <LabelList dataKey="scoreText" position="right" fill="#202421" fontSize={11} />
+              </Bar>
             </BarChart>
           </ResponsiveContainer>
         </section>
@@ -447,69 +540,108 @@ function Advisors({ state, year, month, onReload }: { state: AppState; year: num
         <Kpi label="Asesores activos" value={String(state.kpis.activeAdvisors)} tone="blue" />
         <Kpi label="Ventas año" value={currency(state.advisors.reduce((sum: number, advisor: any) => sum + advisor.yearlySales, 0))} tone="red" />
       </div>
-      <div className="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Asesor</th>
-              <th>Sede</th>
-              <th>Ventas mes</th>
-              <th>Meta mes</th>
-              <th>% Meta 1</th>
-              <th>Score</th>
-              <th>Comision</th>
-              <th>Evaluacion</th>
-            </tr>
-          </thead>
-          <tbody>
-            {state.advisors.map((advisor: any) => (
-              <tr key={advisor.id}>
-                <td><strong>{advisor.name}</strong></td>
-                <td>{advisor.branchName}</td>
-                <td>{currency(advisor.sales)}</td>
-                <td>{advisor.target ? currency(advisor.target.meta4) : "Sin meta"}</td>
-                <td><Progress value={advisor.progressMeta1} /></td>
-                <td><span className={scoreClass(advisor.score.status)}>{advisor.score.score === null ? "Pendiente" : Math.round(advisor.score.score)}</span></td>
-                <td>
-                  <strong>{currency(advisor.commission.finalCommission)}</strong>
+      <section className="advisor-list">
+        {state.advisors.map((advisor: any) => {
+          const nextGoal = nextAdvisorGoal(advisor);
+          const targets = advisor.target
+            ? [
+                ["Meta 1", advisor.target.meta1],
+                ["Meta 2", advisor.target.meta2],
+                ["Meta 3", advisor.target.meta3],
+                ["Meta 4", advisor.target.meta4]
+              ]
+            : [];
+          return (
+            <article className="advisor-card" key={advisor.id}>
+              <header>
+                <div>
+                  <strong>{advisorDisplayName(advisor.name)}</strong>
+                  <span>{advisor.branchName}</span>
+                </div>
+                <div className="advisor-badges">
+                  <span className={scoreClass(advisor.score.status)}>{scoreValue(advisor.score)}</span>
                   <small>{advisor.commission.level}</small>
-                </td>
-                <td>
-                  {editing === advisor.id ? (
-                    <div className="inline-form">
-                      <select value={quality} onChange={(event) => setQuality(event.target.value)}>
-                        <option value="">Calidad</option>
-                        <option>Malo</option>
-                        <option>Regular</option>
-                        <option>Bueno</option>
-                        <option>Excelente</option>
-                      </select>
-                      <select value={admin} onChange={(event) => setAdmin(event.target.value)}>
-                        <option value="">Gestion</option>
-                        <option>Malo</option>
-                        <option>Regular</option>
-                        <option>Bueno</option>
-                        <option>Excelente</option>
-                      </select>
-                      <button onClick={() => saveEvaluation(advisor.id)}>OK</button>
+                </div>
+              </header>
+
+              <div className="advisor-metrics">
+                <div><span>Ventas mes</span><strong>{currency(advisor.sales)}</strong></div>
+                <div><span>Ventas año</span><strong>{currency(advisor.yearlySales)}</strong></div>
+                <div><span>Meta diaria</span><strong>{currency(advisor.dailyGoal)}</strong></div>
+                <div><span>Meta mes</span><strong>{currency(advisor.monthlyGoal)}</strong></div>
+                <div><span>Meta anual</span><strong>{currency(advisor.annualGoal)}</strong></div>
+                <div><span>Comisión</span><strong>{currency(advisor.commission.finalCommission)}</strong></div>
+              </div>
+
+              <div className="goal-progress">
+                <div className="goal-progress-head">
+                  <span>Avance a {nextGoal.label}</span>
+                  <strong>{percent(nextGoal.progress)}</strong>
+                </div>
+                <Progress value={safeRatio(advisor.sales, advisor.target?.meta4)} />
+                <small>
+                  Faltan {currency(nextGoal.missing)} para {nextGoal.label}. Meta actual: {advisor.commission.level}.
+                </small>
+              </div>
+
+              <div className="goal-grid">
+                {targets.map(([label, amount]) => {
+                  const progressValue = safeRatio(advisor.sales, Number(amount));
+                  const missing = Math.max(Number(amount) - advisor.sales, 0);
+                  return (
+                    <div key={label}>
+                      <span>{label}</span>
+                      <strong>{currency(Number(amount))}</strong>
+                      <small>{percent(progressValue)} · falta {currency(missing)}</small>
                     </div>
-                  ) : (
-                    <button
-                      className="link-button"
-                      onClick={() => {
-                        setEditing(advisor.id);
-                        setQuality(advisor.evaluation.qualityRating || "");
-                        setAdmin(advisor.evaluation.adminRating || "");
-                      }}
-                    >
-                      Editar
-                    </button>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+                  );
+                })}
+              </div>
+
+              <footer>
+                <small>
+                  {advisor.commission.usesEvaluation
+                    ? "Esquema con calidad y gestión aplicado."
+                    : "Esquema histórico sin multiplicadores de evaluación."}
+                </small>
+                {editing === advisor.id ? (
+                  <div className="inline-form">
+                    <select value={quality} onChange={(event) => setQuality(event.target.value)}>
+                      <option value="">Calidad</option>
+                      <option>Malo</option>
+                      <option>Regular</option>
+                      <option>Bueno</option>
+                      <option>Excelente</option>
+                    </select>
+                    <select value={admin} onChange={(event) => setAdmin(event.target.value)}>
+                      <option value="">Gestión</option>
+                      <option>Malo</option>
+                      <option>Regular</option>
+                      <option>Bueno</option>
+                      <option>Excelente</option>
+                    </select>
+                    <button onClick={() => saveEvaluation(advisor.id)}>OK</button>
+                  </div>
+                ) : (
+                  <button
+                    className="link-button"
+                    onClick={() => {
+                      setEditing(advisor.id);
+                      setQuality(advisor.evaluation.qualityRating || "");
+                      setAdmin(advisor.evaluation.adminRating || "");
+                    }}
+                  >
+                    Editar evaluación
+                  </button>
+                )}
+              </footer>
+            </article>
+          );
+        })}
+      </section>
+      <div className="policy-note">
+        <strong>{state.commissionPolicy?.label}</strong>
+        <span>{state.commissionPolicy?.usesEvaluation ? "Las comisiones usan multiplicadores de calidad y gestión." : "Las comisiones de este período usan la bonificación histórica del Excel."}</span>
       </div>
     </div>
   );
@@ -659,45 +791,13 @@ function ReportTable({ title, rows, columns }: { title: string; rows: any[]; col
 }
 
 function Direction({ state, year, month, onReload, setNotice }: { state: AppState; year: number; month: number; onReload: () => Promise<void>; setNotice: (value: string) => void }) {
-  const [settings, setSettings] = React.useState({
-    evo_base_url: state.settings.evo_base_url || "",
-    evo_api_key: "",
-    groq_api_key: "",
-    groq_model: state.settings.groq_model || "llama-3.3-70b-versatile"
-  });
-  const [configTab, setConfigTab] = React.useState<"integrations" | "commissions">("integrations");
   const [prompt, setPrompt] = React.useState("Verifica duplicados, calidad de datos y dame 5 acciones comerciales para mejorar el rendimiento de asesores y sedes.");
   const [answer, setAnswer] = React.useState("");
-  const groqConfigured = state.settings.groq_api_key_configured === "true";
-  const evoConfigured = state.settings.evo_api_key_configured === "true";
-
-  React.useEffect(() => {
-    setSettings({
-      evo_base_url: state.settings.evo_base_url || "",
-      evo_api_key: "",
-      groq_api_key: "",
-      groq_model: state.settings.groq_model || "llama-3.3-70b-versatile"
-    });
-  }, [state.settings.evo_base_url, state.settings.groq_model]);
-
-  async function saveSettings() {
-    await fetch("/api/settings", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ values: settings })
-    });
-    setNotice("Integraciones guardadas");
-    await onReload();
-  }
-
-  async function syncEvo() {
-    setNotice("Sincronizando EVO...");
-    const res = await fetch("/api/evo/sync", { method: "POST" });
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.error || "No se pudo sincronizar");
-    setNotice(`EVO importó ${json.summary.rowsInserted} ventas nuevas. Duplicadas omitidas: ${json.summary.duplicatesSkipped}`);
-    await onReload();
-  }
+  const [draft, setDraft] = React.useState({ type: "Requerimiento", title: "", notes: "" });
+  const directionItems = state.initiatives.filter((item: any) => displayArea(item.area) === "Dirección");
+  const requirements = directionItems.filter((item: any) => normalizeText(item.type).includes("REQUERIMIENTO"));
+  const ideas = directionItems.filter((item: any) => normalizeText(item.type).includes("IDEA"));
+  const directionPlans = directionItems.filter((item: any) => normalizeText(item.type).includes("PLAN"));
 
   async function askAi() {
     setAnswer("Pensando...");
@@ -714,6 +814,23 @@ function Direction({ state, year, month, onReload, setNotice }: { state: AppStat
     setAnswer(json.answer);
   }
 
+  async function addDirectionItem() {
+    if (!draft.title.trim()) return;
+    await fetch("/api/initiatives", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        area: "Direccion",
+        type: draft.type,
+        title: draft.title,
+        status: "Pendiente",
+        notes: draft.notes
+      })
+    });
+    setDraft({ type: "Requerimiento", title: "", notes: "" });
+    await onReload();
+  }
+
   return (
     <div className="view">
       <div className="grid two">
@@ -723,35 +840,47 @@ function Direction({ state, year, month, onReload, setNotice }: { state: AppStat
           <div className="metric-row"><span>Director</span><strong>{currency(state.kpis.totalDirectorCommissions)}</strong></div>
           <div className="metric-row"><span>Venta total</span><strong>{currency(state.kpis.totalSales)}</strong></div>
           <Progress value={state.kpis.targetProgress} />
+          <small className="muted-line">{state.commissionPolicy?.label}</small>
+          <div className="mini-list">
+            {state.branches.slice(0, 6).map((branch: any) => (
+              <div key={branch.id} className="metric-row">
+                <span>{branch.name}</span>
+                <strong>{currency(branch.directorCommission.bonus)}</strong>
+              </div>
+            ))}
+          </div>
         </section>
         <section className="panel">
-          <div className="panel-title"><h2>Configuración de la plataforma</h2><Settings size={18} /></div>
-          <div className="config-tabs" role="tablist" aria-label="Configuración">
-            <button className={configTab === "integrations" ? "active" : ""} onClick={() => setConfigTab("integrations")}>Integraciones</button>
-            <button className={configTab === "commissions" ? "active" : ""} onClick={() => setConfigTab("commissions")}>Mecánica de comisiones</button>
+          <div className="panel-title"><h2>Requerimientos, planes e ideas</h2><ClipboardList size={18} /></div>
+          <div className="form-grid direction-form">
+            <select value={draft.type} onChange={(event) => setDraft({ ...draft, type: event.target.value })}>
+              <option>Requerimiento</option>
+              <option>Plan</option>
+              <option>Idea</option>
+            </select>
+            <input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} placeholder="Titulo" />
+            <input value={draft.notes} onChange={(event) => setDraft({ ...draft, notes: event.target.value })} placeholder="Notas o impacto esperado" />
+            <button onClick={addDirectionItem}>Crear</button>
           </div>
-          {configTab === "integrations" ? (
-            <>
-              <div className="form-grid">
-                <input value={settings.evo_base_url} onChange={(event) => setSettings({ ...settings, evo_base_url: event.target.value })} placeholder="URL EVO" />
-                <input value={settings.evo_api_key} onChange={(event) => setSettings({ ...settings, evo_api_key: event.target.value })} placeholder={evoConfigured ? "Clave API EVO configurada" : "Clave API EVO"} type="password" />
-                <input value={settings.groq_api_key} onChange={(event) => setSettings({ ...settings, groq_api_key: event.target.value })} placeholder={groqConfigured ? "Clave API Groq configurada" : "Clave API Groq"} type="password" />
-                <input value={settings.groq_model} onChange={(event) => setSettings({ ...settings, groq_model: event.target.value })} placeholder="Modelo GROQ" />
-              </div>
-              <div className="integration-status">
-                <span>Groq: {groqConfigured ? "configurado" : "pendiente"}</span>
-                <span>EVO: {evoConfigured ? "configurado" : "pendiente"}</span>
-              </div>
-              <div className="button-row">
-                <button onClick={saveSettings}>Guardar</button>
-                <button onClick={() => syncEvo().catch((error) => setNotice(error.message))}>EVO</button>
-              </div>
-            </>
-          ) : (
-            <CommissionMechanics state={state} />
-          )}
+          <div className="direction-columns">
+            <DirectionColumn title="Requerimientos" items={requirements} />
+            <DirectionColumn title="Planes" items={directionPlans} fallback={state.plans.slice(0, 6).map((plan: any) => ({ id: `plan-${plan.id}`, title: plan.name, status: currency(plan.sales), type: plan.category }))} />
+            <DirectionColumn title="Ideas" items={ideas} />
+          </div>
         </section>
       </div>
+      <section className="panel">
+        <div className="panel-title"><h2>Planes comerciales con tracción</h2><FileSpreadsheet size={18} /></div>
+        <div className="plan-strip">
+          {state.plans.slice(0, 10).map((plan: any) => (
+            <article key={plan.id}>
+              <strong>{plan.name}</strong>
+              <span>{plan.category}</span>
+              <small>{currency(plan.sales)} · Score {scoreValue(plan.score)}</small>
+            </article>
+          ))}
+        </div>
+      </section>
       <section className="panel">
         <div className="panel-title"><h2>Calidad de datos y apoyo comercial</h2><Sparkles size={18} /></div>
         <div className="quality-grid">
@@ -808,6 +937,108 @@ function Direction({ state, year, month, onReload, setNotice }: { state: AppStat
   );
 }
 
+function normalizeText(value?: string) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .toUpperCase();
+}
+
+function DirectionColumn({ title, items, fallback = [] }: { title: string; items: any[]; fallback?: any[] }) {
+  const rows = items.length ? items : fallback;
+  return (
+    <div className="direction-column">
+      <h3>{title}</h3>
+      {rows.length ? rows.slice(0, 6).map((item: any) => (
+        <article key={item.id}>
+          <strong>{item.title}</strong>
+          <span>{displayStatus(item.status)}</span>
+          <small>{item.type || item.owner || ""}</small>
+        </article>
+      )) : <Empty />}
+    </div>
+  );
+}
+
+function Configuration({ state, onReload, setNotice }: { state: AppState; onReload: () => Promise<void>; setNotice: (value: string) => void }) {
+  const [settings, setSettings] = React.useState({
+    evo_base_url: state.settings.evo_base_url || "",
+    evo_api_key: "",
+    groq_api_key: "",
+    groq_model: state.settings.groq_model || "llama-3.3-70b-versatile"
+  });
+  const [configTab, setConfigTab] = React.useState<"integrations" | "commissions">("integrations");
+  const groqConfigured = state.settings.groq_api_key_configured === "true";
+  const evoConfigured = state.settings.evo_api_key_configured === "true";
+
+  React.useEffect(() => {
+    setSettings({
+      evo_base_url: state.settings.evo_base_url || "",
+      evo_api_key: "",
+      groq_api_key: "",
+      groq_model: state.settings.groq_model || "llama-3.3-70b-versatile"
+    });
+  }, [state.settings.evo_base_url, state.settings.groq_model]);
+
+  async function saveSettings() {
+    await fetch("/api/settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ values: settings })
+    });
+    setNotice("Integraciones guardadas");
+    await onReload();
+  }
+
+  async function syncEvo() {
+    setNotice("Sincronizando EVO...");
+    const res = await fetch("/api/evo/sync", { method: "POST" });
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || "No se pudo sincronizar");
+    setNotice(`EVO importó ${json.summary.rowsInserted} ventas nuevas. Duplicadas omitidas: ${json.summary.duplicatesSkipped}`);
+    await onReload();
+  }
+
+  return (
+    <div className="view">
+      <section className="panel">
+        <div className="panel-title"><h2>Configuración de la plataforma</h2><Settings size={18} /></div>
+        <div className="config-tabs" role="tablist" aria-label="Configuración">
+          <button className={configTab === "integrations" ? "active" : ""} onClick={() => setConfigTab("integrations")}>Integraciones</button>
+          <button className={configTab === "commissions" ? "active" : ""} onClick={() => setConfigTab("commissions")}>Mecánica de comisiones</button>
+        </div>
+        {configTab === "integrations" ? (
+          <>
+            <div className="form-grid">
+              <input value={settings.evo_base_url} onChange={(event) => setSettings({ ...settings, evo_base_url: event.target.value })} placeholder="URL EVO" />
+              <input value={settings.evo_api_key} onChange={(event) => setSettings({ ...settings, evo_api_key: event.target.value })} placeholder={evoConfigured ? "Clave API EVO configurada" : "Clave API EVO"} type="password" />
+              <input value={settings.groq_api_key} onChange={(event) => setSettings({ ...settings, groq_api_key: event.target.value })} placeholder={groqConfigured ? "Clave API Groq configurada" : "Clave API Groq"} type="password" />
+              <input value={settings.groq_model} onChange={(event) => setSettings({ ...settings, groq_model: event.target.value })} placeholder="Modelo GROQ" />
+            </div>
+            <div className="integration-status">
+              <span>Groq: {groqConfigured ? "configurado" : "pendiente"}</span>
+              <span>EVO: {evoConfigured ? "configurado" : "pendiente"}</span>
+            </div>
+            <div className="button-row">
+              <button onClick={saveSettings}>Guardar</button>
+              <button onClick={() => syncEvo().catch((error) => setNotice(error.message))}>EVO</button>
+            </div>
+          </>
+        ) : (
+          <CommissionMechanics state={state} />
+        )}
+      </section>
+    </div>
+  );
+}
+
+const historicalAdvisorCommissionLevels = [
+  { level: "Meta 1", condition: "100% de Meta 1 asesor", rate: 0.004, bonus: 0 },
+  { level: "Meta 2", condition: "100% de Meta 2 asesor", rate: 0.008, bonus: 0 },
+  { level: "Meta 3", condition: "100% de Meta 3 asesor", rate: 0.012, bonus: 0 },
+  { level: "Meta 4", condition: "100% de Meta 4 asesor", rate: 0.02, bonus: 500000 }
+];
+
 const advisorCommissionLevels = [
   { level: "Activación", condition: "Alcanza meta de activación", rate: 0.0015, bonus: 0 },
   { level: "Bronce", condition: "Alcanza meta bronce", rate: 0.0025, bonus: 0 },
@@ -850,13 +1081,37 @@ function CommissionMechanics({ state }: { state: AppState }) {
       </div>
 
       <div className="guide-block">
-        <h3>1. Cómo se calcula la comisión de un asesor</h3>
-        <p>La plataforma toma las ventas del asesor en el mes, identifica el nivel más alto alcanzado contra sus metas y calcula una comisión base.</p>
+        <h3>1. Esquema vigente del mes filtrado</h3>
+        <p>{state.commissionPolicy?.label}. La plataforma identifica el nivel más alto alcanzado contra las metas del asesor y calcula una comisión base.</p>
         <code>Comisión base = ventas del asesor x porcentaje del nivel + bono fijo</code>
-        <p>Después aplica dos multiplicadores: calidad y gestión administrativa. Esos multiplicadores pueden subir o bajar la comisión final.</p>
+        <p>Desde julio se aplican dos multiplicadores: calidad y gestión administrativa. En enero-junio se respeta la bonificación histórica del Excel sin multiplicadores.</p>
         <code>Comisión final = comisión base x multiplicador calidad x multiplicador gestión</code>
       </div>
 
+      <div className="guide-block">
+        <h3>2. Bonificación histórica enero-junio 2026</h3>
+      </div>
+      <div className="table-wrap small">
+        <table>
+          <thead>
+            <tr><th>Nivel</th><th>Condición</th><th>Porcentaje</th><th>Bono fijo</th></tr>
+          </thead>
+          <tbody>
+            {historicalAdvisorCommissionLevels.map((item) => (
+              <tr key={item.level}>
+                <td>{item.level}</td>
+                <td>{item.condition}</td>
+                <td>{ratePercent(item.rate)}</td>
+                <td>{currency(item.bonus)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="guide-block">
+        <h3>3. Nuevo esquema desde julio 2026</h3>
+      </div>
       <div className="table-wrap small">
         <table>
           <thead>
@@ -876,7 +1131,7 @@ function CommissionMechanics({ state }: { state: AppState }) {
       </div>
 
       <div className="guide-block">
-        <h3>2. Ajuste por calidad y gestión</h3>
+        <h3>4. Ajuste por calidad y gestión</h3>
         <p>La evaluación mensual impacta la comisión. Si el asesor tiene calidad y gestión excelentes, la comisión se multiplica dos veces por 1,15. Si tiene una evaluación baja, se reduce.</p>
       </div>
       <div className="mini-grid">
@@ -890,7 +1145,7 @@ function CommissionMechanics({ state }: { state: AppState }) {
       </div>
 
       <div className="guide-block">
-        <h3>3. Cómo se calculan tus comisiones como director</h3>
+        <h3>5. Cómo se calculan tus comisiones como director</h3>
         <p>Tu comisión se calcula por sede. Cada sede se evalúa contra sus metas del mes. Si una sede llega a Meta 1, Meta 2 o Meta 3, genera un bono fijo. El total del director es la suma de los bonos de todas las sedes.</p>
       </div>
       <div className="table-wrap small">
@@ -911,8 +1166,8 @@ function CommissionMechanics({ state }: { state: AppState }) {
       </div>
 
       <div className="guide-block">
-        <h3>4. Diferencia entre comisión y score</h3>
-        <p>La comisión paga el resultado económico según metas y evaluaciones. El score mide salud comercial: avance a Meta 1, avance a Meta 4, calidad, gestión, conversiones y descuentos. Sirve para priorizar seguimiento y acciones comerciales.</p>
+        <h3>6. Diferencia entre comisión y score</h3>
+        <p>La comisión paga el resultado económico según metas y evaluaciones. El score acumula componentes de salud comercial: avance a Meta 1, avance a Meta 4, calidad, gestión, conversiones y descuentos. Sirve para priorizar seguimiento y acciones comerciales.</p>
       </div>
 
       <div className="example-grid">

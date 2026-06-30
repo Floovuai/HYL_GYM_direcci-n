@@ -4,6 +4,7 @@ import {
   calculateAdvisorScore,
   calculateBranchScore,
   calculateDirectorCommission,
+  commissionSchemeForPeriod,
   DEFAULT_SCORE_SETTINGS,
   monthName
 } from "../shared/business";
@@ -124,12 +125,34 @@ async function targetRows(year: number, month: number) {
   return new Map(rows.map((row) => [Number(row.branch_id), row]));
 }
 
+async function annualTargetRows(year: number) {
+  const rows = await all<AnyRow>(
+    `SELECT
+      branch_id,
+      COALESCE(SUM(advisor_meta1), 0) advisor_meta1,
+      COALESCE(SUM(advisor_meta2), 0) advisor_meta2,
+      COALESCE(SUM(advisor_meta3), 0) advisor_meta3,
+      COALESCE(SUM(advisor_meta4), 0) advisor_meta4,
+      COALESCE(SUM(branch_meta1), 0) branch_meta1,
+      COALESCE(SUM(branch_meta2), 0) branch_meta2,
+      COALESCE(SUM(branch_meta3), 0) branch_meta3,
+      COALESCE(SUM(branch_meta4), 0) branch_meta4
+     FROM monthly_targets
+     WHERE year = ?
+     GROUP BY branch_id`,
+    [year]
+  );
+  return new Map(rows.map((row) => [Number(row.branch_id), row]));
+}
+
 export async function buildAppState(year?: number, month?: number) {
   const settingMap = await settings();
   const selectedYear = year || Number(settingMap.selected_year) || 2026;
   const selectedMonth = month || Number(settingMap.selected_month) || 6;
   const scoreConfig = scoreSettings(settingMap);
+  const commissionScheme = commissionSchemeForPeriod(selectedYear, selectedMonth);
   const targets = await targetRows(selectedYear, selectedMonth);
+  const annualTargets = await annualTargetRows(selectedYear);
 
   const years = await all<{ year: number }>(
     `SELECT DISTINCT year FROM sales
@@ -203,6 +226,9 @@ export async function buildAppState(year?: number, month?: number) {
       conversions: num(row.conversions),
       discounts: 0,
       evaluation: evalInput
+    }, {
+      year: selectedYear,
+      month: selectedMonth
     });
     const score = calculateAdvisorScore(
       {
@@ -228,6 +254,11 @@ export async function buildAppState(year?: number, month?: number) {
       score,
       dailyGoal: target?.dailyMeta4 ?? 0,
       monthlyGoal: target?.meta4 ?? 0,
+      annualGoal: annualTargets.get(Number(row.branch_id))?.advisor_meta4 ?? 0,
+      annualMeta1: annualTargets.get(Number(row.branch_id))?.advisor_meta1 ?? 0,
+      annualMeta2: annualTargets.get(Number(row.branch_id))?.advisor_meta2 ?? 0,
+      annualMeta3: annualTargets.get(Number(row.branch_id))?.advisor_meta3 ?? 0,
+      annualMeta4: annualTargets.get(Number(row.branch_id))?.advisor_meta4 ?? 0,
       progressMeta1: commission.progressMeta1,
       progressMeta4: score.progressMeta4,
       evaluation: evalInput
@@ -376,6 +407,13 @@ export async function buildAppState(year?: number, month?: number) {
       totalDirectorCommissions: branches.reduce((sum, branch) => sum + branch.directorCommission.bonus, 0),
       averageAdvisorScore: advisors.filter((advisor) => advisor.score.score !== null).reduce((sum, advisor, _, arr) => sum + (advisor.score.score ?? 0) / arr.length, 0) || 0,
       averageBranchScore: branches.filter((branch) => branch.score.score !== null).reduce((sum, branch, _, arr) => sum + (branch.score.score ?? 0) / arr.length, 0) || 0
+    },
+    commissionPolicy: {
+      scheme: commissionScheme,
+      label: commissionScheme === "historico_enero_junio_2026"
+        ? "Bonificacion historica enero-junio 2026"
+        : "Rendimiento con evaluacion desde julio 2026",
+      usesEvaluation: commissionScheme === "rendimiento_julio_2026"
     },
     branches,
     advisors,
