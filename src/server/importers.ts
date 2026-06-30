@@ -26,6 +26,10 @@ export interface ImportSummary {
 }
 
 const EXCLUDED_ADVISORS = new Set(["SUPORTEEVO", "SOPORTEEVO", "VICTOR HERRERA", "SOPORTE EVO"]);
+const REMOVED_ADVISOR_HASHES = new Set([
+  "95b803a174210f3ee1a181998036b489e84c7aebe86662d5b521e30568a6cb34",
+  "a1a50593f8c5306e5571fbee2e33fa46a306a24cf579d1444829646ca3dfc2ec"
+]);
 
 const DEFAULT_SETTINGS: Record<string, string> = {
   monthly_conversion_goal_per_advisor: "100",
@@ -152,6 +156,29 @@ export function canonicalAdvisor(raw: unknown): string {
   return key;
 }
 
+function isRemovedAdvisor(raw: unknown) {
+  const name = canonicalAdvisor(raw);
+  if (!name) return false;
+  const hash = crypto.createHash("sha256").update(name).digest("hex");
+  return REMOVED_ADVISOR_HASHES.has(hash);
+}
+
+function hasRemovedAdvisorField(row: Record<string, unknown>) {
+  for (const [key, value] of Object.entries(row)) {
+    const normalizedKey = normalizeKey(key).toLowerCase();
+    const looksLikeAdvisorField =
+      normalizedKey.includes("asesor") ||
+      normalizedKey.includes("advisor") ||
+      normalizedKey.includes("vendedor") ||
+      normalizedKey.includes("seller") ||
+      normalizedKey.includes("empleado") ||
+      normalizedKey.includes("comision") ||
+      normalizedKey.includes("comercial");
+    if (looksLikeAdvisorField && isRemovedAdvisor(value)) return true;
+  }
+  return false;
+}
+
 async function ensureBranch(raw: unknown) {
   const branch = canonicalBranch(raw);
   await run(
@@ -168,6 +195,7 @@ async function ensureBranch(raw: unknown) {
 async function ensureAdvisor(raw: unknown, branchId?: number | null) {
   const name = canonicalAdvisor(raw);
   if (!name) return null;
+  if (isRemovedAdvisor(name)) return null;
   const excluded = EXCLUDED_ADVISORS.has(name) ? 1 : 0;
   await run(
     `INSERT INTO advisors (name, normalized_name, branch_id, excluded_from_commissions)
@@ -225,6 +253,8 @@ export async function seedDefaults() {
       await run("INSERT INTO todos (title, priority, area, notes) VALUES (?, ?, ?, ?)", [title, priority, area, notes]);
     }
   }
+
+  await purgeRemovedAdvisors();
 }
 
 export async function importSalesWorkbook(
@@ -256,6 +286,7 @@ export async function importSalesWorkbook(
     const row = sheet[rowNumber - 1];
     const soldAt = toDate(cell(row, 11));
     if (!soldAt) continue;
+    if (isRemovedAdvisor(text(row, 13))) continue;
     const value = number(row, 10);
     const branchId = await ensureBranch(text(row, 1));
     const advisorId = await ensureAdvisor(text(row, 13), branchId);
@@ -362,6 +393,8 @@ export async function importSalesWorkbook(
     ]
   );
 
+  await purgeRemovedAdvisors();
+
   return {
     sourceType,
     sourceKey,
@@ -417,9 +450,15 @@ export async function importSalesObjects(
       pickObjectValue(item, ["Fecha de venta", "fecha_venta", "sold_at", "created_at", "fecha"]) as CellValue
     );
     if (!soldAt) continue;
+    if (
+      isRemovedAdvisor(pickObjectValue(item, ["Empleado comision", "Empleado comisión", "asesor", "advisor", "vendedor", "seller", "comercial"])) ||
+      hasRemovedAdvisorField(item)
+    ) {
+      continue;
+    }
     const branchId = await ensureBranch(pickObjectValue(item, ["Sede/club", "sede", "club", "branch"]));
     const advisorId = await ensureAdvisor(
-      pickObjectValue(item, ["Empleado comision", "Empleado comisión", "asesor", "vendedor", "seller"]),
+      pickObjectValue(item, ["Empleado comision", "Empleado comisión", "asesor", "advisor", "vendedor", "seller", "comercial"]),
       branchId
     );
     const planId = await ensurePlan(pickObjectValue(item, ["Descripcion", "Descripción", "plan", "producto", "item"]), {
@@ -515,6 +554,8 @@ export async function importSalesObjects(
       JSON.stringify({ months: [...months.values()], importMode: "append_dedupe" })
     ]
   );
+
+  await purgeRemovedAdvisors();
 
   return {
     sourceType,
@@ -623,6 +664,7 @@ export async function importCommissionWorkbook(filePath: string) {
     const branchName = text(row, 3);
     const advisorName = text(row, 4);
     if (!year || !month || !branchName || !advisorName) continue;
+    if (isRemovedAdvisor(advisorName)) continue;
     const branchId = await ensureBranch(branchName);
     const advisorId = await ensureAdvisor(advisorName, branchId);
     if (!advisorId) continue;
@@ -863,7 +905,56 @@ export async function seedFromWorkbooks(paths: SeedPaths) {
         replaceMonths: false
       });
     }
+    await purgeRemovedAdvisors();
   });
+}
+
+export async function purgeRemovedAdvisors() {
+  if (!REMOVED_ADVISOR_HASHES.size) return { salesDeleted: 0, evaluationsDeleted: 0, advisorsDeleted: 0 };
+  const advisors = (await all<{ id: number; normalized_name: string }>("SELECT id, normalized_name FROM advisors"))
+    .filter((advisor) => isRemovedAdvisor(advisor.normalized_name));
+  const advisorIds = advisors.map((advisor) => Number(advisor.id)).filter(Boolean);
+  const rawRows = await all<{ id: number; raw_json: string }>("SELECT id, raw_json FROM sales WHERE raw_json IS NOT NULL");
+  const rawSaleIds = rawRows
+    .filter((row) => {
+      try {
+        const payload = JSON.parse(String(row.raw_json || "{}"));
+        return payload && typeof payload === "object" && hasRemovedAdvisorField(payload as Record<string, unknown>);
+      } catch {
+        return false;
+      }
+    })
+    .map((row) => Number(row.id))
+    .filter(Boolean);
+  const salesIds = [...new Set(rawSaleIds)];
+
+  let salesDeleted = 0;
+  let evaluationsDeleted = 0;
+  let advisorsDeleted = 0;
+
+  if (advisorIds.length) {
+    const idPlaceholders = advisorIds.map(() => "?").join(", ");
+    if (salesIds.length) {
+      const salePlaceholders = salesIds.map(() => "?").join(", ");
+      await run(
+        `DELETE FROM sales WHERE advisor_id IN (${idPlaceholders}) OR id IN (${salePlaceholders})`,
+        [...advisorIds, ...salesIds]
+      );
+    } else {
+      await run(`DELETE FROM sales WHERE advisor_id IN (${idPlaceholders})`, advisorIds);
+    }
+    salesDeleted = (await scalar<number>("SELECT changes()")) ?? 0;
+    await run(`DELETE FROM advisor_evaluations WHERE advisor_id IN (${idPlaceholders})`, advisorIds);
+    evaluationsDeleted = (await scalar<number>("SELECT changes()")) ?? 0;
+    await run(`DELETE FROM advisors WHERE id IN (${idPlaceholders})`, advisorIds);
+    advisorsDeleted = (await scalar<number>("SELECT changes()")) ?? 0;
+  } else if (salesIds.length) {
+    const salePlaceholders = salesIds.map(() => "?").join(", ");
+    await run(`DELETE FROM sales WHERE id IN (${salePlaceholders})`, salesIds);
+    salesDeleted = (await scalar<number>("SELECT changes()")) ?? 0;
+  }
+
+  return { salesDeleted, evaluationsDeleted, advisorsDeleted };
 }
 
 export async function updateEvaluation(input: {
