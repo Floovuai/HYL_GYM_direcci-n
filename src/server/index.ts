@@ -12,7 +12,8 @@ import {
   seedDefaults,
   updateEvaluation
 } from "./importers";
-import { buildAppState, buildQualityReport, exportRows, toCsv } from "./queries";
+import { createManagerPdf } from "./pdfReport";
+import { buildAppState, buildManagerReport, buildQualityReport, exportRows, toCsv } from "./queries";
 
 loadLocalEnv();
 
@@ -406,6 +407,72 @@ app.get("/api/export/:kind.csv", async (req, res, next) => {
     res.header("Content-Type", "text/csv; charset=utf-8");
     res.attachment(`${req.params.kind}-${year}-${month}.csv`);
     res.send(toCsv(rows));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/export/gerencial.pdf", async (req, res, next) => {
+  try {
+    const year = Number(req.query.year || new Date().getFullYear());
+    const month = Number(req.query.month || new Date().getMonth() + 1);
+    const report = await buildManagerReport(year, month);
+    const rawSections = String(req.query.sections || "").split(",").map((item) => item.trim()).filter(Boolean);
+    const sections = new Set(
+      rawSections.length
+        ? rawSections
+        : ["summary", "charts", "daily", "monthly", "annual", "branches", "advisors", "plans", "scores", "quality", "recommendations"]
+    );
+    const includeGroq = String(req.query.includeGroq || "0") === "1";
+    let groqInsights = "";
+
+    if (includeGroq) {
+      const settings = await integrationSettings();
+      if (settings.groq_api_key) {
+        const { response, json } = await askGroq(
+          settings.groq_api_key,
+          settings.groq_model,
+          [
+            {
+              role: "system",
+              content:
+                "Eres un director comercial senior de gimnasios. Entrega recomendaciones ejecutivas en espanol para un informe gerencial. Se directo, accionable y basado solo en los datos."
+            },
+            {
+              role: "user",
+              content: JSON.stringify({
+                objetivo: "Generar sugerencias de accion para el PDF gerencial de HYL Gym.",
+                periodo: report.state.filters,
+                kpis: report.state.kpis,
+                calidadDatos: report.state.quality,
+                sedes: report.annualByBranch.slice(0, 10),
+                asesores: report.annualByAdvisor.slice(0, 12),
+                planes: report.annualByPlan.slice(0, 12),
+                recomendacionesSistema: report.state.recommendations
+              })
+            }
+          ],
+          1100
+        );
+        groqInsights = response.ok
+          ? json.choices?.[0]?.message?.content ?? ""
+          : `Groq no pudo generar sugerencias: ${json?.error?.message || response.status}`;
+      } else {
+        groqInsights = "Groq no esta configurado para esta instalacion.";
+      }
+    }
+
+    const pdf = await createManagerPdf(report, {
+      year,
+      month,
+      monthName: report.state.filters.selectedMonthName,
+      sections,
+      includeGroq,
+      groqInsights
+    });
+    res.header("Content-Type", "application/pdf");
+    res.attachment(`informe-gerencial-hyl-gym-${year}-${String(month).padStart(2, "0")}.pdf`);
+    res.send(pdf);
   } catch (error) {
     next(error);
   }

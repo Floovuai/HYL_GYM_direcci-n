@@ -8,6 +8,7 @@ import {
   ClipboardList,
   Download,
   Dumbbell,
+  FileText,
   FileSpreadsheet,
   LineChart,
   Megaphone,
@@ -36,13 +37,13 @@ type TabId = "dashboard" | "advisors" | "branches" | "marketing" | "board" | "di
 type AppState = any;
 
 const tabs: Array<{ id: TabId; label: string; icon: React.ElementType }> = [
-  { id: "dashboard", label: "Dashboard", icon: BarChart3 },
+  { id: "dashboard", label: "Tablero", icon: BarChart3 },
   { id: "advisors", label: "Asesores", icon: Users },
   { id: "branches", label: "Sedes", icon: Building2 },
-  { id: "marketing", label: "Marketing", icon: Megaphone },
-  { id: "board", label: "Informes", icon: ClipboardList },
-  { id: "direction", label: "Direccion", icon: Settings },
-  { id: "todos", label: "To Do", icon: CheckSquare }
+  { id: "marketing", label: "Mercadeo", icon: Megaphone },
+  { id: "board", label: "Informes gerenciales", icon: ClipboardList },
+  { id: "direction", label: "Dirección", icon: Settings },
+  { id: "todos", label: "Tareas", icon: CheckSquare }
 ];
 
 const monthOptions = [
@@ -83,6 +84,36 @@ function scoreClass(status?: string) {
   return "status pending";
 }
 
+function displayStatus(value?: string) {
+  if (!value) return "";
+  const map: Record<string, string> = {
+    Backlog: "Pendiente",
+    completed: "Completado",
+    done: "Hecho"
+  };
+  return map[value] || value;
+}
+
+function displayArea(value?: string) {
+  if (!value) return "";
+  const map: Record<string, string> = {
+    Marketing: "Mercadeo",
+    Direccion: "Dirección"
+  };
+  return map[value] || value;
+}
+
+function columnLabel(value: string) {
+  const map: Record<string, string> = {
+    name: "Nombre",
+    sales: "Ventas",
+    rows: "Registros",
+    branchName: "Sede",
+    day: "Día"
+  };
+  return map[value] || value;
+}
+
 function Kpi({ label, value, sub, tone = "green" }: { label: string; value: string; sub?: string; tone?: string }) {
   return (
     <div className={`kpi ${tone}`}>
@@ -113,6 +144,7 @@ function App() {
   const [month, setMonth] = React.useState(6);
   const [loading, setLoading] = React.useState(true);
   const [notice, setNotice] = React.useState("");
+  const [exportOpen, setExportOpen] = React.useState(false);
   const fileInput = React.useRef<HTMLInputElement | null>(null);
 
   const load = React.useCallback(async () => {
@@ -142,7 +174,7 @@ function App() {
   }
 
   if (!state && loading) {
-    return <div className="boot">Cargando HYL Gym Direccion</div>;
+    return <div className="boot">Cargando HYL Gym Dirección</div>;
   }
 
   return (
@@ -152,7 +184,7 @@ function App() {
           <Dumbbell size={24} />
           <div>
             <strong>HYL Gym</strong>
-            <span>Direccion comercial</span>
+            <span>Dirección comercial</span>
           </div>
         </div>
         <nav>
@@ -200,6 +232,10 @@ function App() {
               <Upload size={18} />
               <span>Excel</span>
             </button>
+            <button title="Exportar PDF" onClick={() => setExportOpen(true)}>
+              <FileText size={18} />
+              <span>PDF</span>
+            </button>
             <button title="Actualizar" onClick={() => load()}>
               <RefreshCcw size={18} />
             </button>
@@ -217,10 +253,88 @@ function App() {
             {tab === "board" && <BoardReports state={state} year={year} month={month} />}
             {tab === "direction" && <Direction state={state} year={year} month={month} onReload={load} setNotice={setNotice} />}
             {tab === "todos" && <Todos state={state} onReload={load} />}
+            {exportOpen ? <ExportDialog state={state} year={year} month={month} onClose={() => setExportOpen(false)} /> : null}
           </>
         ) : null}
       </section>
     </main>
+  );
+}
+
+const pdfSections = [
+  { id: "summary", label: "Resumen ejecutivo", description: "KPI principales, hallazgos y lectura general." },
+  { id: "charts", label: "Graficos gerenciales", description: "Visuales de sedes, asesores, planes y tendencia." },
+  { id: "daily", label: "Informe diario", description: "Ventas por dia y mejores dias del mes." },
+  { id: "monthly", label: "Informe mensual", description: "Evolucion mes a mes con metas y avance." },
+  { id: "annual", label: "Informe anual", description: "Acumulado del ano y comparativos clave." },
+  { id: "branches", label: "Sedes", description: "Rendimiento mensual, anual, meta y score." },
+  { id: "advisors", label: "Asesores", description: "Ventas, comisiones y score comercial." },
+  { id: "plans", label: "Planes", description: "Ventas por plan, registros y score del plan." },
+  { id: "scores", label: "Scores", description: "Score de sedes, asesores y planes." },
+  { id: "quality", label: "Calidad de datos", description: "Duplicados, llaves unicas y datos por revisar." },
+  { id: "recommendations", label: "Acciones sugeridas", description: "Recomendaciones calculadas por la plataforma." }
+];
+
+function ExportDialog({ state, year, month, onClose }: { state: AppState; year: number; month: number; onClose: () => void }) {
+  const [selected, setSelected] = React.useState(() => new Set(pdfSections.map((item) => item.id)));
+  const [includeGroq, setIncludeGroq] = React.useState(false);
+  const groqConfigured = state.settings.groq_api_key_configured === "true";
+
+  function toggle(id: string) {
+    setSelected((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function exportPdf() {
+    const sections = Array.from(selected);
+    const params = new URLSearchParams({
+      year: String(year),
+      month: String(month),
+      sections: sections.join(","),
+      includeGroq: includeGroq ? "1" : "0"
+    });
+    window.open(`/api/export/gerencial.pdf?${params.toString()}`, "_blank", "noopener,noreferrer");
+    onClose();
+  }
+
+  return (
+    <div className="modal-backdrop" role="dialog" aria-modal="true">
+      <section className="export-dialog">
+        <header>
+          <div>
+            <h2>Exportar informe PDF</h2>
+            <p>{state.filters.selectedMonthName} {state.filters.selectedYear}</p>
+          </div>
+          <button className="icon-button" onClick={onClose} title="Cerrar">X</button>
+        </header>
+        <div className="export-grid">
+          {pdfSections.map((item) => (
+            <label key={item.id} className="check-row">
+              <input type="checkbox" checked={selected.has(item.id)} onChange={() => toggle(item.id)} />
+              <span>
+                <strong>{item.label}</strong>
+                <small>{item.description}</small>
+              </span>
+            </label>
+          ))}
+        </div>
+        <label className="check-row ai-option">
+          <input type="checkbox" checked={includeGroq} onChange={(event) => setIncludeGroq(event.target.checked)} disabled={!groqConfigured} />
+          <span>
+            <strong>Incluir sugerencias guiadas por Groq</strong>
+            <small>{groqConfigured ? "Agrega analisis ejecutivo generado con IA al PDF." : "Groq no esta configurado."}</small>
+          </span>
+        </label>
+        <footer>
+          <button className="secondary-button" onClick={onClose}>Cancelar</button>
+          <button onClick={exportPdf} disabled={!selected.size}>Generar PDF</button>
+        </footer>
+      </section>
+    </div>
   );
 }
 
@@ -432,7 +546,7 @@ function Marketing({ state, onReload }: { state: AppState; onReload: () => Promi
     await fetch("/api/initiatives", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ area: "Marketing", type: "Campana", title, status: "Backlog" })
+      body: JSON.stringify({ area: "Marketing", type: "Campana", title, status: "Pendiente" })
     });
     setTitle("");
     await onReload();
@@ -459,7 +573,7 @@ function Marketing({ state, onReload }: { state: AppState; onReload: () => Promi
           </div>
         </section>
         <section className="panel">
-          <div className="panel-title"><h2>KPI marketing</h2><LineChart size={18} /></div>
+          <div className="panel-title"><h2>Indicadores de mercadeo</h2><LineChart size={18} /></div>
           <ResponsiveContainer width="100%" height={280}>
             <ReLineChart data={state.monthlySales}>
               <CartesianGrid strokeDasharray="3 3" vertical={false} />
@@ -472,16 +586,16 @@ function Marketing({ state, onReload }: { state: AppState; onReload: () => Promi
         </section>
       </div>
       <section className="panel">
-        <div className="panel-title"><h2>Campanas y estrategias</h2><Megaphone size={18} /></div>
+        <div className="panel-title"><h2>Campañas y estrategias</h2><Megaphone size={18} /></div>
         <div className="add-row">
-          <input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Nueva campana" />
+          <input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Nueva campaña" />
           <button onClick={addCampaign}>Crear</button>
         </div>
         <div className="initiative-list">
           {state.marketing.length ? state.marketing.slice(0, 24).map((item: any) => (
             <article key={item.id} className="initiative">
               <strong>{item.title}</strong>
-              <span>{item.status}</span>
+              <span>{displayStatus(item.status)}</span>
               <small>{item.channel || item.type}</small>
             </article>
           )) : <Empty />}
@@ -492,14 +606,19 @@ function Marketing({ state, onReload }: { state: AppState; onReload: () => Promi
 }
 
 function BoardReports({ state, year, month }: { state: AppState; year: number; month: number }) {
-  const downloads = ["sales", "branches", "advisors", "plans"];
+  const downloads = [
+    { kind: "sales", label: "Ventas" },
+    { kind: "branches", label: "Sedes" },
+    { kind: "advisors", label: "Asesores" },
+    { kind: "plans", label: "Planes" }
+  ];
   return (
     <div className="view">
       <div className="download-row">
-        {downloads.map((kind) => (
-          <a key={kind} href={`/api/export/${kind}.csv?year=${year}&month=${month}`}>
+        {downloads.map((item) => (
+          <a key={item.kind} href={`/api/export/${item.kind}.csv?year=${year}&month=${month}`}>
             <Download size={16} />
-            {kind}.csv
+            {item.label} CSV
           </a>
         ))}
       </div>
@@ -519,7 +638,7 @@ function ReportTable({ title, rows, columns }: { title: string; rows: any[]; col
       <div className="panel-title"><h2>{title}</h2><ClipboardList size={18} /></div>
       <div className="table-wrap small">
         <table>
-          <thead><tr>{columns.map((col) => <th key={col}>{col}</th>)}</tr></thead>
+          <thead><tr>{columns.map((col) => <th key={col}>{columnLabel(col)}</th>)}</tr></thead>
           <tbody>
             {rows.length ? rows.map((row, index) => (
               <tr key={row.id ?? index}>
@@ -571,7 +690,7 @@ function Direction({ state, year, month, onReload, setNotice }: { state: AppStat
     const res = await fetch("/api/evo/sync", { method: "POST" });
     const json = await res.json();
     if (!res.ok) throw new Error(json.error || "No se pudo sincronizar");
-    setNotice(`EVO importo ${json.summary.rowsInserted} ventas nuevas. Duplicadas omitidas: ${json.summary.duplicatesSkipped}`);
+    setNotice(`EVO importó ${json.summary.rowsInserted} ventas nuevas. Duplicadas omitidas: ${json.summary.duplicatesSkipped}`);
     await onReload();
   }
 
@@ -584,7 +703,7 @@ function Direction({ state, year, month, onReload, setNotice }: { state: AppStat
     });
     const json = await res.json();
     if (!res.ok) {
-      setAnswer(json.error || "Groq no respondio");
+      setAnswer(json.error || "Groq no respondió");
       return;
     }
     setAnswer(json.answer);
@@ -603,9 +722,9 @@ function Direction({ state, year, month, onReload, setNotice }: { state: AppStat
         <section className="panel">
           <div className="panel-title"><h2>Integraciones</h2><Settings size={18} /></div>
           <div className="form-grid">
-            <input value={settings.evo_base_url} onChange={(event) => setSettings({ ...settings, evo_base_url: event.target.value })} placeholder="EVO URL" />
-            <input value={settings.evo_api_key} onChange={(event) => setSettings({ ...settings, evo_api_key: event.target.value })} placeholder={evoConfigured ? "EVO API key configurada" : "EVO API key"} type="password" />
-            <input value={settings.groq_api_key} onChange={(event) => setSettings({ ...settings, groq_api_key: event.target.value })} placeholder={groqConfigured ? "GROQ API key configurada" : "GROQ API key"} type="password" />
+            <input value={settings.evo_base_url} onChange={(event) => setSettings({ ...settings, evo_base_url: event.target.value })} placeholder="URL EVO" />
+            <input value={settings.evo_api_key} onChange={(event) => setSettings({ ...settings, evo_api_key: event.target.value })} placeholder={evoConfigured ? "Clave API EVO configurada" : "Clave API EVO"} type="password" />
+            <input value={settings.groq_api_key} onChange={(event) => setSettings({ ...settings, groq_api_key: event.target.value })} placeholder={groqConfigured ? "Clave API Groq configurada" : "Clave API Groq"} type="password" />
             <input value={settings.groq_model} onChange={(event) => setSettings({ ...settings, groq_model: event.target.value })} placeholder="Modelo GROQ" />
           </div>
           <div className="integration-status">
@@ -619,7 +738,7 @@ function Direction({ state, year, month, onReload, setNotice }: { state: AppStat
         </section>
       </div>
       <section className="panel">
-        <div className="panel-title"><h2>QA datos y apoyo comercial</h2><Sparkles size={18} /></div>
+        <div className="panel-title"><h2>Calidad de datos y apoyo comercial</h2><Sparkles size={18} /></div>
         <div className="quality-grid">
           <div className="quality-card">
             <span>Duplicados</span>
@@ -627,7 +746,7 @@ function Direction({ state, year, month, onReload, setNotice }: { state: AppStat
             <small>{state.quality.status}</small>
           </div>
           <div className="quality-card">
-            <span>Llaves unicas</span>
+            <span>Llaves únicas</span>
             <strong>{state.quality.uniqueSaleKeys}</strong>
             <small>{state.quality.totalRows} ventas</small>
           </div>
@@ -659,13 +778,13 @@ function Direction({ state, year, month, onReload, setNotice }: { state: AppStat
         {answer ? <pre className="answer">{answer}</pre> : null}
       </section>
       <section className="panel">
-        <div className="panel-title"><h2>Roadmap operativo</h2><ClipboardList size={18} /></div>
+        <div className="panel-title"><h2>Hoja de ruta operativa</h2><ClipboardList size={18} /></div>
         <div className="initiative-list">
           {state.initiatives.slice(0, 18).map((item: any) => (
             <article key={item.id} className="initiative">
               <strong>{item.title}</strong>
-              <span>{item.status}</span>
-              <small>{item.area} · {item.type}</small>
+              <span>{displayStatus(item.status)}</span>
+              <small>{displayArea(item.area)} · {item.type}</small>
             </article>
           ))}
         </div>
@@ -710,9 +829,9 @@ function Todos({ state, onReload }: { state: AppState; onReload: () => Promise<v
               </button>
               <div>
                 <strong>{todo.title}</strong>
-                <span>{todo.area} · {todo.priority}</span>
+                <span>{displayArea(todo.area)} · {todo.priority}</span>
               </div>
-              <small>{todo.status}</small>
+              <small>{displayStatus(todo.status)}</small>
             </article>
           ))}
         </div>

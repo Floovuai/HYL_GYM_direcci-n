@@ -11,6 +11,7 @@ Plataforma local full stack para direccion comercial de HYL Gym. Centraliza vent
 - Base de datos: SQLite persistente con `sql.js`, guardado en `data/hyl_gym.db`.
 - Importacion: Excel compatible con el formato de `VENTAS GENERALES.xlsx`; sincronizacion JSON generica para API EVO.
 - IA: endpoint Groq compatible con Chat Completions, configurado por `.env`.
+- PDF: generacion backend con `pdfkit` para informes gerenciales A4.
 
 ## Flujo de datos
 
@@ -20,6 +21,7 @@ Plataforma local full stack para direccion comercial de HYL Gym. Centraliza vent
 4. Las metas julio-diciembre 2026 se siembran desde `Control_Comisiones_Anual_2026_FINAL.xlsx`.
 5. La API calcula comisiones, scores y reportes usando funciones TypeScript testeadas.
 6. La UI consume `/api/state?year=YYYY&month=M`.
+7. El endpoint `/api/export/gerencial.pdf` genera el PDF con secciones seleccionables y Groq opcional.
 
 ## Modulos
 
@@ -27,6 +29,7 @@ Plataforma local full stack para direccion comercial de HYL Gym. Centraliza vent
 - `src/server/importers.ts`: importacion Excel, EVO, metas, precios, campanas y evaluaciones.
 - `src/server/queries.ts`: agregaciones y estado de la app.
 - `src/server/queries.ts`: tambien entrega QA de duplicados y recomendaciones comerciales.
+- `src/server/pdfReport.ts`: informe gerencial PDF con graficos, tablas y secciones configurables.
 - `src/server/index.ts`: API HTTP.
 - `src/shared/business.ts`: reglas de comisiones y score.
 - `src/client/main.tsx`: interfaz principal.

@@ -9,10 +9,10 @@
 
 ## Epica 2: Operacion diaria
 
-- Dashboard por sede y asesor.
+- Tablero por sede y asesor.
 - Calendario comercial del mes.
 - Carga de Excel mensual.
-- To Do list con prioridades y responsables.
+- Lista de tareas con prioridades y responsables.
 
 ## Epica 3: Gobierno de comisiones
 
@@ -21,8 +21,9 @@
 - Comisiones de asesores y director.
 - Evaluacion mensual calidad/gestion.
 - Export CSV para validacion de junta.
+- Exportacion PDF gerencial con secciones seleccionables, graficos y Groq opcional.
 
-## Epica 4: Marketing y crecimiento
+## Epica 4: Mercadeo y crecimiento
 
 - Planes y precios.
 - Estrategias y campanas.
@@ -34,9 +35,9 @@
 - Configuracion EVO.
 - Configuracion Groq.
 - Ideas y requerimientos asistidos por IA.
-- Roadmap operativo.
+- Hoja de ruta operativa.
 
-## Roadmap sugerido
+## Hoja de ruta sugerida
 
 ### Semana 1
 
@@ -48,9 +49,9 @@
 ### Semana 2
 
 - Agregar autenticacion local.
-- Crear roles: Direccion, Marketing, Consulta.
+- Crear roles: Direccion, Mercadeo, Consulta.
 - Agregar bitacora de cambios por usuario.
-- Export PDF de informe de junta.
+- Plantillas de PDF por perfil: junta, direccion y sede.
 
 ### Semana 3
 

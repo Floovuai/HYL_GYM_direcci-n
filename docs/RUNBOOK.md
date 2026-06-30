@@ -55,12 +55,31 @@ npm start
 - Los datos semilla no se reemplazan; quedan como base historica inicial.
 - Cada importacion queda auditada en `import_batches`, incluyendo filas leidas, insertadas y duplicadas omitidas.
 
+## Exportar informe gerencial PDF
+
+Usar el boton `PDF` en la barra superior. El selector permite incluir o excluir:
+
+- Resumen ejecutivo.
+- Graficos gerenciales.
+- Informe diario.
+- Informe mensual.
+- Informe anual.
+- Sedes.
+- Asesores.
+- Planes.
+- Scores.
+- Calidad de datos.
+- Acciones sugeridas.
+- Sugerencias guiadas por Groq.
+
+La opcion de Groq es independiente y solo se incluye cuando se marca. El PDF se genera en el backend y se descarga como archivo A4.
+
 ## API EVO
 
 En Direccion > Integraciones:
 
-- `EVO URL`: endpoint que devuelva JSON.
-- `EVO API key`: token bearer opcional.
+- `URL EVO`: endpoint que devuelva JSON.
+- `Clave API EVO`: token bearer opcional.
 
 El sincronizador acepta una lista directa o propiedades `data` / `sales`.
 
@@ -76,7 +95,7 @@ GROQ_MODEL=llama-3.3-70b-versatile
 El asistente usa los KPI y rankings filtrados por ano/mes.
 Tambien recibe el reporte de calidad de datos, duplicados y recomendaciones comerciales calculadas por la plataforma.
 
-La pantalla Direccion > Integraciones muestra el estado de Groq sin devolver la clave cruda al navegador. Si se deja el campo `GROQ API key` vacio al guardar integraciones, la clave existente no se borra.
+La pantalla Direccion > Integraciones muestra el estado de Groq sin devolver la clave cruda al navegador. Si se deja el campo `Clave API Groq` vacio al guardar integraciones, la clave existente no se borra.
 
 Healthcheck:
 

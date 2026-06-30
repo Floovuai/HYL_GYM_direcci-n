@@ -45,6 +45,33 @@ function scoreSettings(map: Record<string, string>) {
   };
 }
 
+function scoreStatusFromNumber(score: number | null) {
+  if (score === null) return "Pendiente";
+  if (score >= DEFAULT_SCORE_SETTINGS.scoreHigh) return "Alto";
+  if (score >= DEFAULT_SCORE_SETTINGS.scoreMedium) return "Medio";
+  return "Bajo";
+}
+
+function comparativeScore(sales: number, maxSales: number, rows: number, maxRows: number) {
+  if (sales <= 0 || maxSales <= 0) {
+    return {
+      score: null,
+      status: "Pendiente",
+      salesScore: 0,
+      volumeScore: 0
+    };
+  }
+  const salesScore = Math.min(sales / maxSales, 1) * 100;
+  const volumeScore = maxRows > 0 ? Math.min(rows / maxRows, 1) * 100 : 0;
+  const score = Math.round(salesScore * 0.7 + volumeScore * 0.3);
+  return {
+    score,
+    status: scoreStatusFromNumber(score),
+    salesScore,
+    volumeScore
+  };
+}
+
 function advisorTarget(row?: AnyRow): AdvisorTarget | null {
   if (!row) return null;
   return {
@@ -326,6 +353,8 @@ export async function buildAppState(year?: number, month?: number) {
       targetProgress: totalTarget > 0 ? totalSales / totalTarget : 0
     }
   });
+  const maxPlanSales = Math.max(...plans.map((plan) => num(plan.sales)), 0);
+  const maxPlanRows = Math.max(...plans.map((plan) => num(plan.rows)), 0);
 
   return {
     generatedAt: new Date().toISOString(),
@@ -350,14 +379,19 @@ export async function buildAppState(year?: number, month?: number) {
     },
     branches,
     advisors,
-    plans: plans.map((plan) => ({
-      ...plan,
-      sales: num(plan.sales),
-      rows: num(plan.rows),
-      cash_price: plan.cash_price === null ? null : num(plan.cash_price),
-      card_price: plan.card_price === null ? null : num(plan.card_price),
-      cost_per_month: plan.cost_per_month === null ? null : num(plan.cost_per_month)
-    })),
+    plans: plans.map((plan) => {
+      const sales = num(plan.sales);
+      const rows = num(plan.rows);
+      return {
+        ...plan,
+        sales,
+        rows,
+        score: comparativeScore(sales, maxPlanSales, rows, maxPlanRows),
+        cash_price: plan.cash_price === null ? null : num(plan.cash_price),
+        card_price: plan.card_price === null ? null : num(plan.card_price),
+        cost_per_month: plan.cost_per_month === null ? null : num(plan.cost_per_month)
+      };
+    }),
     dailySales,
     monthlySales: monthlySales.map((row) => ({
       ...row,
@@ -456,6 +490,167 @@ export async function buildQualityReport(year?: number, month?: number) {
       duplicateGroups.length === 0 && naturalDuplicateGroups.length === 0
         ? "OK"
         : "Revisar"
+  };
+}
+
+export async function buildManagerReport(year: number, month: number) {
+  const state = await buildAppState(year, month);
+  const annualSummary = await get<AnyRow>(
+    `SELECT
+      COALESCE(SUM(value), 0) total_sales,
+      COUNT(*) sales_rows,
+      COUNT(DISTINCT branch_id) active_branches,
+      COUNT(DISTINCT advisor_id) active_advisors,
+      AVG(NULLIF(value, 0)) avg_ticket
+     FROM sales
+     WHERE year = ?`,
+    [year]
+  );
+
+  const monthlyRows = await all<AnyRow>(
+    `SELECT month, COALESCE(SUM(value), 0) sales, COUNT(*) rows, AVG(NULLIF(value, 0)) avg_ticket
+     FROM sales
+     WHERE year = ?
+     GROUP BY month
+     ORDER BY month`,
+    [year]
+  );
+  const monthlyTargets = await all<AnyRow>(
+    `SELECT month, COALESCE(SUM(branch_meta1), 0) target
+     FROM monthly_targets
+     WHERE year = ?
+     GROUP BY month`,
+    [year]
+  );
+  const targetByMonth = new Map(monthlyTargets.map((row) => [Number(row.month), num(row.target)]));
+  const salesByMonth = new Map(monthlyRows.map((row) => [Number(row.month), row]));
+  const monthlyTrend = Array.from({ length: 12 }, (_, index) => {
+    const monthNumberValue = index + 1;
+    const row = salesByMonth.get(monthNumberValue);
+    const sales = num(row?.sales);
+    const target = targetByMonth.get(monthNumberValue) ?? 0;
+    return {
+      month: monthNumberValue,
+      label: monthName(monthNumberValue),
+      sales,
+      rows: num(row?.rows),
+      avgTicket: num(row?.avg_ticket),
+      target,
+      progress: target > 0 ? sales / target : 0
+    };
+  });
+
+  const branchTargets = await all<AnyRow>(
+    `SELECT branch_id, COALESCE(SUM(branch_meta1), 0) annual_meta1, COALESCE(SUM(branch_meta4), 0) annual_meta4
+     FROM monthly_targets
+     WHERE year = ?
+     GROUP BY branch_id`,
+    [year]
+  );
+  const branchTargetById = new Map(branchTargets.map((row) => [
+    Number(row.branch_id),
+    { annualMeta1: num(row.annual_meta1), annualMeta4: num(row.annual_meta4) }
+  ]));
+
+  const branchRows = await all<AnyRow>(
+    `SELECT b.id, b.display_name name, COALESCE(SUM(s.value), 0) sales, COUNT(s.id) rows
+     FROM branches b
+     LEFT JOIN sales s ON s.branch_id = b.id AND s.year = ?
+     WHERE b.active = 1
+     GROUP BY b.id
+     ORDER BY sales DESC, b.display_name`,
+    [year]
+  );
+  const currentBranchById = new Map(state.branches.map((branch: AnyRow) => [Number(branch.id), branch]));
+  const annualByBranch = branchRows.map((row) => {
+    const id = Number(row.id);
+    const sales = num(row.sales);
+    const target = branchTargetById.get(id) ?? { annualMeta1: 0, annualMeta4: 0 };
+    const current = currentBranchById.get(id);
+    return {
+      id,
+      name: row.name,
+      sales,
+      rows: num(row.rows),
+      annualTarget: target.annualMeta1,
+      annualProgress: target.annualMeta1 > 0 ? sales / target.annualMeta1 : 0,
+      monthlySales: current?.sales ?? 0,
+      score: current?.score ?? { score: null, status: "Pendiente" }
+    };
+  });
+
+  const advisorRows = await all<AnyRow>(
+    `SELECT a.id, a.name, b.display_name branch_name, COALESCE(SUM(s.value), 0) sales, COUNT(s.id) rows
+     FROM advisors a
+     LEFT JOIN branches b ON b.id = a.branch_id
+     LEFT JOIN sales s ON s.advisor_id = a.id AND s.year = ?
+     WHERE a.active = 1 AND a.excluded_from_commissions = 0
+     GROUP BY a.id
+     ORDER BY sales DESC, a.name`,
+    [year]
+  );
+  const currentAdvisorById = new Map(state.advisors.map((advisor: AnyRow) => [Number(advisor.id), advisor]));
+  const annualByAdvisor = advisorRows.map((row) => {
+    const id = Number(row.id);
+    const current = currentAdvisorById.get(id);
+    return {
+      id,
+      name: row.name,
+      branchName: row.branch_name ?? current?.branchName ?? "Sin sede",
+      sales: num(row.sales),
+      rows: num(row.rows),
+      monthlySales: current?.sales ?? 0,
+      score: current?.score ?? { score: null, status: "Pendiente" },
+      commission: current?.commission ?? null
+    };
+  });
+
+  const planRows = await all<AnyRow>(
+    `SELECT p.id, p.name, p.category, COALESCE(SUM(s.value), 0) sales, COUNT(s.id) rows
+     FROM plans p
+     LEFT JOIN sales s ON s.plan_id = p.id AND s.year = ?
+     GROUP BY p.id
+     ORDER BY sales DESC, rows DESC, p.name
+     LIMIT 80`,
+    [year]
+  );
+  const maxAnnualPlanSales = Math.max(...planRows.map((plan) => num(plan.sales)), 0);
+  const maxAnnualPlanRows = Math.max(...planRows.map((plan) => num(plan.rows)), 0);
+  const annualByPlan = planRows.map((row) => {
+    const sales = num(row.sales);
+    const rows = num(row.rows);
+    const current = state.plans.find((plan: AnyRow) => Number(plan.id) === Number(row.id));
+    return {
+      id: Number(row.id),
+      name: row.name,
+      category: row.category,
+      sales,
+      rows,
+      monthlySales: current?.sales ?? 0,
+      score: comparativeScore(sales, maxAnnualPlanSales, rows, maxAnnualPlanRows)
+    };
+  });
+
+  const topDays = state.dailySales
+    .slice()
+    .sort((a: AnyRow, b: AnyRow) => num(b.sales) - num(a.sales))
+    .slice(0, 6);
+
+  return {
+    state,
+    annual: {
+      totalSales: num(annualSummary?.total_sales),
+      salesRows: num(annualSummary?.sales_rows),
+      activeBranches: num(annualSummary?.active_branches),
+      activeAdvisors: num(annualSummary?.active_advisors),
+      avgTicket: num(annualSummary?.avg_ticket)
+    },
+    dailyTrend: state.dailySales,
+    monthlyTrend,
+    annualByBranch,
+    annualByAdvisor,
+    annualByPlan,
+    topDays
   };
 }
 

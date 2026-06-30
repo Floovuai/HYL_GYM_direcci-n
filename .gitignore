@@ -4,6 +4,7 @@ data/*.db
 data/*.db-*
 uploads/*
 !uploads/.gitkeep
+tmp/
 .env
 .DS_Store
 Thumbs.db
