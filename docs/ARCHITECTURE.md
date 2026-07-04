@@ -2,45 +2,113 @@
 
 ## Objetivo
 
-Plataforma local full stack para direccion comercial de HYL Gym. Centraliza ventas, metas, comisiones, scores, campanas, informes de junta, direccion, configuracion, integraciones y tareas operativas.
+Plataforma local full stack para direccion comercial de HYL Gym. Centraliza ventas, metas, comisiones, scores, campanas, informes gerenciales, direccion, configuracion, integraciones y tareas operativas.
+
+La aplicacion esta pensada para operar en un PC de la red local y exponerse por `http://IP_DEL_PC:4310` para consulta desde celular.
 
 ## Stack
 
-- Frontend: React + Vite, responsive para escritorio y celular en modo consulta.
+- Frontend: React + Vite, con `recharts` para visuales gerenciales.
 - Backend: Node.js + Express + TypeScript.
 - Base de datos: SQLite persistente con `sql.js`, guardado en `data/hyl_gym.db`.
-- Importacion: Excel compatible con el formato de `VENTAS GENERALES.xlsx`; sincronizacion JSON generica para API EVO.
-- IA: endpoint Groq compatible con Chat Completions, configurado por `.env`.
-- PDF: generacion backend con `pdfkit` para informes gerenciales A4.
+- Importacion: Excel compatible con `VENTAS GENERALES.xlsx` y sincronizacion EVO por API.
+- IA: Groq compatible con Chat Completions para sugerencias comerciales y PDF.
+- PDF: generacion backend con `pdfkit` en formato horizontal gerencial.
+
+## Arranque
+
+1. `src/server/index.ts` carga `.env`, crea `uploads`, aplica migraciones y ejecuta `seedDefaults`.
+2. `src/server/schema.ts` crea tablas e indices y normaliza `sale_key` para ventas existentes.
+3. `src/server/importers.ts` siembra configuracion, tareas iniciales, ventas, metas, planes, precios, campanas y evaluaciones.
+4. Express expone la API en `PORT` o `4310` y sirve `dist/client` cuando existe build.
+5. En desarrollo, Vite sirve el frontend y el backend responde las rutas `/api`.
 
 ## Flujo de datos
 
-1. Excel de ventas o API EVO entrega ventas con sede, asesor, plan, valor y fecha.
-2. El backend normaliza sedes, asesores y planes.
-3. SQLite guarda ventas atomicas y tablas maestras; cada venta tiene `sale_key` unico para evitar duplicados.
-4. Las metas enero-junio 2026 se siembran desde `META 2026`; julio-diciembre 2026 desde `Control_Comisiones_Anual_2026_FINAL.xlsx`.
-5. La API calcula comisiones, scores y reportes usando funciones TypeScript testeadas.
-6. La UI consume `/api/state?year=YYYY&month=M`.
-7. El endpoint `/api/export/gerencial.pdf` genera el PDF con secciones seleccionables y Groq opcional.
+1. Las ventas entran por Excel manual o por EVO.
+2. El importador normaliza sedes, asesores y planes; omite asesores de soporte/retiro y ventas EVO con valor menor o igual a cero.
+3. Cada venta genera una `sale_key` natural unica. Si ya existe, se omite y se reporta como duplicada.
+4. Las metas enero-junio 2026 vienen de la mecanica historica; desde julio 2026 se recalibran metas de asesor y sede con historico productivo reciente.
+5. `buildAppState` agrega ventas, metas, comisiones, scores, calidad de datos, recomendaciones, reportes base y cobertura del mes.
+6. La UI consume `/api/state?year=YYYY&month=M`. Si no se envia periodo, usa el mes actual en zona `America/Bogota`.
+7. Para el mes actual, `/api/state` y `/api/reports/gerencial` intentan sincronizar EVO automaticamente cada 5 minutos si EVO esta configurado.
+8. El endpoint `/api/reports/gerencial` entrega el modelo JSON del informe; `/api/export/gerencial.pdf` genera el PDF con secciones seleccionables y Groq opcional.
 
 ## Modulos
 
-- `src/server/schema.ts`: migraciones SQLite.
-- `src/server/importers.ts`: importacion Excel, EVO, metas, precios, campanas y evaluaciones.
-- `src/server/queries.ts`: agregaciones y estado de la app.
-- `src/server/queries.ts`: tambien entrega QA de duplicados y recomendaciones comerciales.
-- `src/server/pdfReport.ts`: informe gerencial PDF con graficos, tablas y secciones configurables.
-- `src/server/index.ts`: API HTTP.
-- `src/shared/business.ts`: reglas de comisiones y score.
-- `src/client/main.tsx`: interfaz principal con Direccion y Configuracion como pestañas separadas.
+- `src/server/schema.ts`: migraciones SQLite, indices y deduplicacion de `sale_key`.
+- `src/server/db.ts`: apertura, transacciones y persistencia atomica del archivo SQLite.
+- `src/server/env.ts`: lectura de `.env` y resolucion de rutas del proyecto.
+- `src/server/importers.ts`: importacion Excel, EVO, metas motivacionales, precios, campanas, defaults y evaluaciones.
+- `src/server/queries.ts`: agregaciones, estado de app, QA, recomendaciones y modelo de informe gerencial.
+- `src/server/pdfReport.ts`: PDF gerencial horizontal con tablas, graficos, calidad de datos y sugerencias.
+- `src/server/index.ts`: API HTTP, configuracion, salud, EVO, Groq, exportes y bootstrap.
+- `src/shared/business.ts`: reglas de comisiones, metas, scores y niveles.
+- `src/shared/types.ts`: tipos compartidos de negocio.
+- `src/client/main.tsx`: aplicacion React, pestanas operativas, reportes en pantalla, configuracion e integraciones.
+- `src/client/styles.css`: layout responsive, reportes, impresion y estados visuales.
 - `tests/business.test.ts`: pruebas de formulas comerciales.
+
+## API principal
+
+- `GET /api/health`: conteos basicos y salud local.
+- `GET /api/state?year=&month=`: estado completo de tablero, ventas, metas, scores, QA, recomendaciones, settings publicos y cobertura de datos.
+- `GET /api/quality/duplicates?year=&month=`: diagnostico de duplicados naturales y por `sale_key`.
+- `GET /api/reports/gerencial?year=&month=`: modelo JSON del informe gerencial anual hasta el mes seleccionado.
+- `GET /api/settings`: configuracion publica; los secretos vuelven vacios con bandera `configured`.
+- `PUT /api/settings`: guarda settings; campos secretos vacios no borran el valor existente.
+- `POST /api/import/sales-excel`: importa ventas desde Excel subido.
+- `POST /api/evo/sync`: sincroniza ventas EVO del periodo indicado o del mes actual.
+- `GET /api/evo/health`: prueba credenciales EVO contra ventas del mes actual.
+- `POST /api/ai/ask` y `GET /api/ai/health`: consultas y verificacion Groq.
+- `PUT /api/evaluations/:advisorId`: actualiza evaluacion mensual de asesor.
+- `POST /api/initiatives`, `POST /api/todos`, `DELETE /api/todos/:id`: operacion diaria.
+- `GET /api/export/gerencial.pdf`: descarga PDF gerencial.
+- `GET /api/export/:kind.csv`: retirado; responde `410` porque los informes oficiales son PDF.
+
+## Integracion EVO
+
+La configuracion efectiva se toma de variables de entorno y, si faltan, de SQLite:
+
+- `EVO_BASE_URL`: por defecto `https://evo-integracao-api.w12app.com.br`.
+- `EVO_DNS`: DNS/tenant usado como usuario Basic.
+- `EVO_API_KEY` o `EVO_SECRET_KEY`: token usado como password Basic.
+
+El backend arma la ruta `/api/v2/sales` cuando la URL base no incluye path, envia `dateSaleStart`, `dateSaleEnd`, `take=100` y `skip`, y pagina hasta 5.000 registros. La autorizacion es `Basic base64(EVO_DNS:EVO_API_KEY)`.
+
+El parser acepta listas directas o propiedades comunes (`data`, `items`, `sales`, `vendas`, `records`, `results`, `result`, `value`) y busca campos anidados para fecha, sede, asesor, plan, valor, cantidad y cliente.
+
+## Informes gerenciales
+
+La pantalla `Informes gerenciales` ya no descarga CSV. Muestra el informe en pantalla con el mismo enfoque del PDF:
+
+- Enero a mes seleccionado.
+- Dinero ingresado mensual y promedio.
+- Sedes, asesores y planes con ventas positivas.
+- Rendimiento diario mensual.
+- Ventas sin asesor asignado y ventas positivas asociadas a SUPORTEEVO.
+
+El PDF usa el modelo de `buildManagerReport` y puede incluir resumen, graficos, diario, mensual, anual, sedes, asesores, planes, scores, calidad, recomendaciones y sugerencias Groq.
+
+## Metas y comisiones
+
+La plataforma separa:
+
+- Esquema historico enero-junio 2026.
+- Esquema de rendimiento desde julio 2026.
+
+Desde julio, Meta 1 de asesor se calcula por sede con promedio de asesores productivos, piso sobre el mejor resultado reciente y tope contra ese mismo mejor resultado. Las metas 2, 3 y 4 son 110%, 120% y 130% de Meta 1. Bronce es 75% y Plata 90%.
+
+Las metas de sede tambien se recalibran con ventas recientes de la sede. El score de sedes conserva comision de director en backend, pero la UI prioriza avance, registros y lectura operativa.
 
 ## Persistencia
 
-La base queda en `data/hyl_gym.db`. Cada mutacion corre en transaccion y se guarda con escritura temporal + rename para reducir riesgo de archivo parcial.
+La base queda en `data/hyl_gym.db`. Cada mutacion corre dentro de transaccion y se guarda con escritura temporal + rename para reducir riesgo de archivo parcial.
 
-La carga de ventas es incremental: no borra meses existentes. Si una fila ya existe, se omite por `sale_key`; si es nueva, se agrega.
+La carga de ventas es incremental: no borra meses existentes. Si una fila ya existe, se omite por `sale_key`; si es nueva, se agrega. `import_batches` conserva auditoria de fuente, filas leidas, insertadas, valor total, duplicadas omitidas y detalle.
 
 ## Seguridad local
 
-La app esta pensada para red local. Groq se lee desde `GROQ_API_KEY` en `.env`, archivo ignorado por Git. Las claves configuradas desde UI quedan marcadas como secretas en SQLite y no se devuelven crudas en `/api/state`. Para una version multiusuario se recomienda agregar autenticacion, cifrado de secretos y roles por perfil.
+La app esta pensada para red local. Groq y EVO pueden configurarse por `.env` o desde UI. Las claves guardadas en UI quedan marcadas como secretas en SQLite y no se devuelven crudas en `/api/state` ni `/api/settings`.
+
+Para una version multiusuario se recomienda agregar autenticacion, cifrado de secretos en reposo, roles por perfil, bitacora por usuario y backups automaticos.

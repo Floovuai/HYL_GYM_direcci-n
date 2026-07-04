@@ -12,6 +12,7 @@
 - Tablero por sede y asesor.
 - Calendario comercial del mes.
 - Carga de Excel mensual.
+- Sincronizacion EVO del mes actual.
 - Lista de tareas con prioridades y responsables.
 
 ## Epica 3: Gobierno de comisiones
@@ -20,7 +21,7 @@
 - Score de sedes.
 - Comisiones de asesores y director.
 - Evaluacion mensual calidad/gestion.
-- Export CSV para validacion de junta.
+- Informe gerencial en pantalla.
 - Exportacion PDF gerencial con secciones seleccionables, graficos y Groq opcional.
 
 ## Epica 4: Mercadeo y crecimiento
@@ -42,7 +43,7 @@
 ### Semana 1
 
 - Validar importacion con 2 archivos reales adicionales.
-- Confirmar contrato final de API EVO.
+- Validar sincronizacion EVO con credenciales reales, DNS, paginacion y rango mensual.
 - Validar metas historicas enero-junio 2026 ya integradas desde `META 2026`.
 - Revisar alias faltantes de asesores.
 
