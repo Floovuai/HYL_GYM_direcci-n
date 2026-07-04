@@ -70,6 +70,10 @@ export async function migrate() {
     CREATE INDEX IF NOT EXISTS idx_sales_period ON sales(year, month, day);
     CREATE INDEX IF NOT EXISTS idx_sales_branch_period ON sales(branch_id, year, month);
     CREATE INDEX IF NOT EXISTS idx_sales_advisor_period ON sales(advisor_id, year, month);
+    CREATE INDEX IF NOT EXISTS idx_sales_client_period ON sales(client_external_id, year, month);
+    CREATE INDEX IF NOT EXISTS idx_sales_plan_period ON sales(plan_id, year, month);
+    CREATE INDEX IF NOT EXISTS idx_sales_sold_at ON sales(sold_at);
+    CREATE INDEX IF NOT EXISTS idx_sales_source ON sales(source_type, source_key);
 
     CREATE TABLE IF NOT EXISTS monthly_targets (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -180,6 +184,71 @@ export async function migrate() {
       owner TEXT DEFAULT '',
       due_date TEXT,
       area TEXT DEFAULT 'Direccion',
+      notes TEXT DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS metric_cache (
+      cache_key TEXT PRIMARY KEY,
+      year INTEGER NOT NULL,
+      month INTEGER NOT NULL,
+      source_version TEXT NOT NULL,
+      payload TEXT NOT NULL,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_metric_cache_period ON metric_cache(year, month);
+
+    CREATE TABLE IF NOT EXISTS evo_sync_checkpoints (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      source TEXT NOT NULL DEFAULT 'evo',
+      year INTEGER NOT NULL,
+      month INTEGER NOT NULL,
+      last_started_at TEXT,
+      last_completed_at TEXT,
+      last_status TEXT NOT NULL DEFAULT 'pending',
+      last_error TEXT DEFAULT '',
+      last_rows_inserted INTEGER NOT NULL DEFAULT 0,
+      last_duplicates_skipped INTEGER NOT NULL DEFAULT 0,
+      last_total_value REAL NOT NULL DEFAULT 0,
+      cursor_json TEXT DEFAULT '{}',
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(source, year, month)
+    );
+
+    CREATE TABLE IF NOT EXISTS ai_context_snapshots (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      year INTEGER NOT NULL,
+      month INTEGER NOT NULL,
+      snapshot_key TEXT NOT NULL UNIQUE,
+      payload TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_ai_context_snapshots_period ON ai_context_snapshots(year, month, created_at);
+
+    CREATE TABLE IF NOT EXISTS ai_insights (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      year INTEGER NOT NULL,
+      month INTEGER NOT NULL,
+      snapshot_id INTEGER REFERENCES ai_context_snapshots(id),
+      source TEXT NOT NULL DEFAULT 'groq',
+      prompt TEXT NOT NULL,
+      answer TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'Generado',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_ai_insights_period ON ai_insights(year, month, created_at);
+
+    CREATE TABLE IF NOT EXISTS ai_actions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      insight_id INTEGER REFERENCES ai_insights(id),
+      title TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'Pendiente',
+      priority TEXT NOT NULL DEFAULT 'Media',
+      owner TEXT DEFAULT '',
       notes TEXT DEFAULT '',
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP

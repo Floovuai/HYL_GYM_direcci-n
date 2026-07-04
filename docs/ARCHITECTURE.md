@@ -10,7 +10,7 @@ La aplicacion esta pensada para operar en un PC de la red local y exponerse por 
 
 - Frontend: React + Vite, con `recharts` para visuales gerenciales.
 - Backend: Node.js + Express + TypeScript.
-- Base de datos: SQLite persistente con `sql.js`, guardado en `data/hyl_gym.db`.
+- Base de datos: SQLite nativo con `better-sqlite3`, WAL y `busy_timeout`, guardado en `data/hyl_gym.db`.
 - Importacion: Excel compatible con `VENTAS GENERALES.xlsx` y sincronizacion EVO por API.
 - IA: Groq compatible con Chat Completions para sugerencias comerciales y PDF.
 - PDF: generacion backend con `pdfkit` en formato horizontal gerencial.
@@ -29,20 +29,21 @@ La aplicacion esta pensada para operar en un PC de la red local y exponerse por 
 2. El importador normaliza sedes, asesores y planes; omite asesores de soporte/retiro y ventas EVO con valor menor o igual a cero.
 3. Cada venta genera una `sale_key` natural unica. Si ya existe, se omite y se reporta como duplicada.
 4. Las metas enero-junio 2026 vienen de la mecanica historica; desde julio 2026 se recalibran metas de asesor y sede con historico productivo reciente.
-5. `buildAppState` agrega ventas, metas, comisiones, scores, calidad de datos, recomendaciones, reportes base y cobertura del mes.
+5. `buildAppState` agrega ventas, metas, comisiones, scores, calidad de datos, crecimiento inteligente, recomendaciones, reportes base y cobertura del mes.
 6. La UI consume `/api/state?year=YYYY&month=M`. Si no se envia periodo, usa el mes actual en zona `America/Bogota`.
-7. Para el mes actual, `/api/state` y `/api/reports/gerencial` intentan sincronizar EVO automaticamente cada 5 minutos si EVO esta configurado.
-8. El endpoint `/api/reports/gerencial` entrega el modelo JSON del informe; `/api/export/gerencial.pdf` genera el PDF con secciones seleccionables y Groq opcional.
+7. EVO se sincroniza con un worker interno con checkpoint por periodo; el render del tablero ya no bloquea esperando la API externa.
+8. El navegador escucha `/api/events` por Server-Sent Events y refresca datos cuando entran ventas nuevas.
+9. El endpoint `/api/reports/gerencial` entrega el modelo JSON del informe; `/api/export/gerencial.pdf` genera el PDF con secciones seleccionables y Groq opcional.
 
 ## Modulos
 
 - `src/server/schema.ts`: migraciones SQLite, indices y deduplicacion de `sale_key`.
-- `src/server/db.ts`: apertura, transacciones y persistencia atomica del archivo SQLite.
+- `src/server/db.ts`: apertura SQLite nativa, WAL, transacciones y health de persistencia.
 - `src/server/env.ts`: lectura de `.env` y resolucion de rutas del proyecto.
 - `src/server/importers.ts`: importacion Excel, EVO, metas motivacionales, precios, campanas, defaults y evaluaciones.
 - `src/server/queries.ts`: agregaciones, estado de app, QA, recomendaciones y modelo de informe gerencial.
 - `src/server/pdfReport.ts`: PDF gerencial horizontal con tablas, graficos, calidad de datos y sugerencias.
-- `src/server/index.ts`: API HTTP, configuracion, salud, EVO, Groq, exportes y bootstrap.
+- `src/server/index.ts`: API HTTP, configuracion, salud, worker EVO, SSE, memoria Groq, exportes y bootstrap.
 - `src/shared/business.ts`: reglas de comisiones, metas, scores y niveles.
 - `src/shared/types.ts`: tipos compartidos de negocio.
 - `src/client/main.tsx`: aplicacion React, pestanas operativas, reportes en pantalla, configuracion e integraciones.
@@ -53,6 +54,7 @@ La aplicacion esta pensada para operar en un PC de la red local y exponerse por 
 
 - `GET /api/health`: conteos basicos y salud local.
 - `GET /api/state?year=&month=`: estado completo de tablero, ventas, metas, scores, QA, recomendaciones, settings publicos y cobertura de datos.
+- `GET /api/events`: canal SSE para ventas y sincronizacion EVO en tiempo real.
 - `GET /api/quality/duplicates?year=&month=`: diagnostico de duplicados naturales y por `sale_key`.
 - `GET /api/reports/gerencial?year=&month=`: modelo JSON del informe gerencial anual hasta el mes seleccionado.
 - `GET /api/settings`: configuracion publica; los secretos vuelven vacios con bandera `configured`.
@@ -60,7 +62,9 @@ La aplicacion esta pensada para operar en un PC de la red local y exponerse por 
 - `POST /api/import/sales-excel`: importa ventas desde Excel subido.
 - `POST /api/evo/sync`: sincroniza ventas EVO del periodo indicado o del mes actual.
 - `GET /api/evo/health`: prueba credenciales EVO contra ventas del mes actual.
+- `GET /api/evo/status`: ultimo checkpoint del worker EVO.
 - `POST /api/ai/ask` y `GET /api/ai/health`: consultas y verificacion Groq.
+- `GET /api/ai/insights`: memoria de insights y acciones guardadas por periodo.
 - `PUT /api/evaluations/:advisorId`: actualiza evaluacion mensual de asesor.
 - `POST /api/initiatives`, `POST /api/todos`, `DELETE /api/todos/:id`: operacion diaria.
 - `GET /api/export/gerencial.pdf`: descarga PDF gerencial.
@@ -77,6 +81,10 @@ La configuracion efectiva se toma de variables de entorno y, si faltan, de SQLit
 El backend arma la ruta `/api/v2/sales` cuando la URL base no incluye path, envia `dateSaleStart`, `dateSaleEnd`, `take=100` y `skip`, y pagina hasta 5.000 registros. La autorizacion es `Basic base64(EVO_DNS:EVO_API_KEY)`.
 
 El parser acepta listas directas o propiedades comunes (`data`, `items`, `sales`, `vendas`, `records`, `results`, `result`, `value`) y busca campos anidados para fecha, sede, asesor, plan, valor, cantidad y cliente.
+
+El worker EVO corre cada `EVO_SYNC_INTERVAL_MS` milisegundos si `EVO_SYNC_WORKER` no es `0`. Cada corrida queda registrada en `evo_sync_checkpoints` con estado, error, filas insertadas, duplicados y cursor JSON. Las rutas manuales usan el mismo checkpoint.
+
+Cuando entran ventas nuevas, el backend emite `sales_updated` por `/api/events` para que el navegador recargue el estado sin refrescar la pagina manualmente.
 
 ## Informes gerenciales
 
@@ -101,11 +109,19 @@ Desde julio, Meta 1 de asesor se calcula por sede con promedio de asesores produ
 
 Las metas de sede tambien se recalibran con ventas recientes de la sede. El score de sedes conserva comision de director en backend, pero la UI prioriza avance, registros y lectura operativa.
 
-## Persistencia
+## Cache, IA y persistencia
 
-La base queda en `data/hyl_gym.db`. Cada mutacion corre dentro de transaccion y se guarda con escritura temporal + rename para reducir riesgo de archivo parcial.
+La base queda en `data/hyl_gym.db`. `better-sqlite3` opera sobre el archivo real con WAL, `synchronous=NORMAL` y transacciones `BEGIN IMMEDIATE`.
 
 La carga de ventas es incremental: no borra meses existentes. Si una fila ya existe, se omite por `sale_key`; si es nueva, se agrega. `import_batches` conserva auditoria de fuente, filas leidas, insertadas, valor total, duplicadas omitidas y detalle.
+
+`metric_cache` guarda agregados costosos por periodo, empezando por el modulo de crecimiento. La version del cache se deriva de conteo, suma, max id y fecha maxima de ventas del periodo; si entra una venta nueva, se recalcula.
+
+Groq ahora guarda memoria operativa:
+
+- `ai_context_snapshots`: contexto compacto enviado a IA.
+- `ai_insights`: respuesta generada por periodo.
+- `ai_actions`: acciones derivadas de recomendaciones y seguimiento.
 
 ## Seguridad local
 

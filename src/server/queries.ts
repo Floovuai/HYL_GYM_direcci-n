@@ -10,7 +10,7 @@ import {
   normalizeKey
 } from "../shared/business";
 import type { AdvisorTarget, BranchTarget, EvaluationInput } from "../shared/types";
-import { all, get, scalar } from "./db";
+import { all, get, run, scalar } from "./db";
 
 type AnyRow = Record<string, any>;
 
@@ -807,7 +807,58 @@ function planFamily(name: string) {
   return "Otros";
 }
 
+async function periodSourceVersion(year: number, month: number) {
+  const row = await get<AnyRow>(
+    `SELECT
+      COUNT(*) rows_count,
+      COALESCE(SUM(value), 0) sales,
+      COALESCE(MAX(id), 0) max_id,
+      COALESCE(MAX(created_at), '') last_created_at
+     FROM sales
+     WHERE year = ? AND month = ?`,
+    [year, month]
+  );
+  return JSON.stringify({
+    rows: num(row?.rows_count),
+    sales: Math.round(num(row?.sales)),
+    maxId: num(row?.max_id),
+    lastCreatedAt: row?.last_created_at ?? ""
+  });
+}
+
+async function readMetricCache<T>(cacheKey: string, sourceVersion: string) {
+  const cached = await get<{ payload: string; source_version: string }>(
+    "SELECT payload, source_version FROM metric_cache WHERE cache_key = ?",
+    [cacheKey]
+  );
+  if (!cached || cached.source_version !== sourceVersion) return null;
+  try {
+    return JSON.parse(cached.payload) as T;
+  } catch {
+    return null;
+  }
+}
+
+async function writeMetricCache(cacheKey: string, year: number, month: number, sourceVersion: string, payload: unknown) {
+  await run(
+    `INSERT INTO metric_cache (cache_key, year, month, source_version, payload, updated_at)
+     VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+     ON CONFLICT(cache_key) DO UPDATE SET
+       year=excluded.year,
+       month=excluded.month,
+       source_version=excluded.source_version,
+       payload=excluded.payload,
+       updated_at=CURRENT_TIMESTAMP`,
+    [cacheKey, year, month, sourceVersion, JSON.stringify(payload)]
+  );
+}
+
 async function buildIntelligentGrowth(year: number, month: number) {
+  const cacheKey = `growth:${year}-${String(month).padStart(2, "0")}`;
+  const sourceVersion = await periodSourceVersion(year, month);
+  const cached = await readMetricCache<AnyRow>(cacheKey, sourceVersion);
+  if (cached) return cached;
+
   const previous = previousPeriod(year, month);
   const previousClientRows = await all<AnyRow>(
     `SELECT DISTINCT client_external_id client
@@ -1046,7 +1097,7 @@ async function buildIntelligentGrowth(year: number, month: number) {
     }
   ];
 
-  return {
+  const result = {
     period: { year, month, previousYear: previous.year, previousMonth: previous.month },
     retention: {
       previousClients,
@@ -1066,6 +1117,8 @@ async function buildIntelligentGrowth(year: number, month: number) {
     ltvScenarios,
     recommendations
   };
+  await writeMetricCache(cacheKey, year, month, sourceVersion, result);
+  return result;
 }
 
 function buildCommercialRecommendations(input: {

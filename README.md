@@ -53,7 +53,7 @@ Usa el boton **Excel** de la barra superior. El importador:
 
 La lectura de libros semilla usa hojas por nombre, por lo que integra correctamente `META 2026`, `PRECIOS`, `ESTRATEGIAS`, `PLANES PREVENTAS` y `BONIFICACION 2026`.
 
-Si EVO esta configurado, la plataforma sincroniza automaticamente el mes actual al consultar tablero o informe gerencial, con una ventana minima de 5 minutos entre intentos. Tambien puede ejecutarse desde `Configuracion > Integraciones`.
+Si EVO esta configurado, un worker interno sincroniza automaticamente el mes actual sin bloquear el tablero. Tambien puede ejecutarse desde `Configuracion > Integraciones`.
 
 ## Base de datos
 
@@ -63,7 +63,7 @@ La informacion se guarda en:
 data/hyl_gym.db
 ```
 
-Cada escritura se hace en transaccion y se persiste al archivo SQLite.
+La base usa SQLite nativo con `better-sqlite3`, WAL y transacciones directas.
 
 En Docker, `data/` y `uploads/` se montan como volumenes bind del proyecto:
 
@@ -121,6 +121,7 @@ GROQ_MODEL=llama-3.3-70b-versatile
 ```
 
 La interfaz muestra `Groq: configurado` sin exponer el token. El contexto enviado a Groq incluye KPI, sedes, asesores, planes, reporte de duplicados y recomendaciones del sistema.
+La plataforma guarda memoria de IA: snapshot de contexto, insight generado y acciones sugeridas para seguimiento.
 
 La configuracion se gestiona en `Configuracion > Integraciones`. La explicacion de comisiones vive en `Configuracion > Mecanica de comisiones`.
 
@@ -128,6 +129,7 @@ Verificacion rapida:
 
 ```text
 http://localhost:4310/api/ai/health
+http://localhost:4310/api/ai/insights?year=2026&month=6
 ```
 
 ## Verificacion

@@ -1,69 +1,58 @@
 import fs from "node:fs";
 import path from "node:path";
-import initSqlJs, { type BindParams, type Database as SqlDatabase, type SqlJsStatic } from "sql.js";
+import BetterSqlite3, { type Database as SqlDatabase } from "better-sqlite3";
 import { resolveFromRoot } from "./env";
 
 type Row = Record<string, unknown>;
+type BindParams = unknown[] | Record<string, unknown>;
 
-let SQL: SqlJsStatic | null = null;
 let db: SqlDatabase | null = null;
 let dbPath = "";
 
-async function getSql() {
-  if (SQL) return SQL;
-  SQL = await initSqlJs({
-    locateFile: (file) => path.resolve(process.cwd(), "node_modules", "sql.js", "dist", file)
-  });
-  return SQL;
+function applyParams<T>(fn: (...args: unknown[]) => T, params?: BindParams): T {
+  if (!params) return fn();
+  if (Array.isArray(params)) return fn(...params);
+  return fn(params);
 }
 
 export async function openDb() {
   if (db) return db;
-  const sqlite = await getSql();
   dbPath = resolveFromRoot(process.env.DATABASE_PATH, "./data/hyl_gym.db");
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
-  if (fs.existsSync(dbPath)) {
-    db = new sqlite.Database(fs.readFileSync(dbPath));
-  } else {
-    db = new sqlite.Database();
-  }
-  db.run("PRAGMA foreign_keys = ON");
+  db = new BetterSqlite3(dbPath);
+  db.pragma("foreign_keys = ON");
+  db.pragma("journal_mode = WAL");
+  db.pragma("synchronous = NORMAL");
+  db.pragma("busy_timeout = 5000");
   return db;
 }
 
 export async function saveDb() {
   const database = await openDb();
-  fs.mkdirSync(path.dirname(dbPath), { recursive: true });
-  const tmp = `${dbPath}.tmp`;
-  fs.writeFileSync(tmp, Buffer.from(database.export()));
-  fs.renameSync(tmp, dbPath);
+  database.pragma("wal_checkpoint(PASSIVE)");
 }
 
 export async function exec(sql: string) {
   const database = await openDb();
-  database.run(sql);
+  database.exec(sql);
 }
 
 export async function run(sql: string, params?: BindParams) {
   const database = await openDb();
-  database.run(sql, params);
+  const stmt = database.prepare(sql);
+  applyParams((...args) => stmt.run(...args), params);
 }
 
 export async function all<T extends Row = Row>(sql: string, params?: BindParams): Promise<T[]> {
   const database = await openDb();
   const stmt = database.prepare(sql);
-  const rows: T[] = [];
-  try {
-    if (params) stmt.bind(params);
-    while (stmt.step()) rows.push(stmt.getAsObject() as T);
-  } finally {
-    stmt.free();
-  }
-  return rows;
+  return applyParams((...args) => stmt.all(...args) as T[], params);
 }
 
 export async function get<T extends Row = Row>(sql: string, params?: BindParams): Promise<T | undefined> {
-  return (await all<T>(sql, params))[0];
+  const database = await openDb();
+  const stmt = database.prepare(sql);
+  return applyParams((...args) => stmt.get(...args) as T | undefined, params);
 }
 
 export async function scalar<T = unknown>(sql: string, params?: BindParams): Promise<T | null> {
@@ -74,14 +63,13 @@ export async function scalar<T = unknown>(sql: string, params?: BindParams): Pro
 
 export async function transaction<T>(fn: () => Promise<T> | T): Promise<T> {
   const database = await openDb();
-  database.run("BEGIN IMMEDIATE TRANSACTION");
+  database.exec("BEGIN IMMEDIATE TRANSACTION");
   try {
     const result = await fn();
-    database.run("COMMIT");
-    await saveDb();
+    database.exec("COMMIT");
     return result;
   } catch (error) {
-    database.run("ROLLBACK");
+    database.exec("ROLLBACK");
     throw error;
   }
 }

@@ -99,7 +99,8 @@ El contenedor expone `/api/health` como healthcheck interno.
 - Los datos semilla no se reemplazan; quedan como base historica inicial.
 - Cada importacion queda auditada en `import_batches`, incluyendo filas leidas, insertadas y duplicadas omitidas.
 - La cabecera muestra cobertura del mes: ultimo dia con ventas positivas, dia pendiente e importacion mas reciente.
-- Para el mes actual, la plataforma intenta sincronizar EVO automaticamente cada 5 minutos si EVO esta configurado.
+- Para el mes actual, la plataforma sincroniza EVO desde un worker interno configurable.
+- La sincronizacion automatica no bloquea la carga del tablero y deja checkpoint por periodo.
 
 ## Exportar informe gerencial PDF
 
@@ -144,8 +145,18 @@ Endpoints utiles:
 
 ```text
 http://localhost:4310/api/evo/health
+http://localhost:4310/api/evo/status
 POST http://localhost:4310/api/evo/sync
 ```
+
+Variables de tiempo real:
+
+```text
+EVO_SYNC_WORKER=1
+EVO_SYNC_INTERVAL_MS=60000
+```
+
+El navegador escucha `/api/events` por SSE. Cuando el worker o una carga Excel insertan ventas nuevas, se emite `sales_updated` y la UI recarga el estado.
 
 ## Groq
 
@@ -158,6 +169,7 @@ GROQ_MODEL=llama-3.3-70b-versatile
 
 El asistente usa los KPI y rankings filtrados por ano/mes.
 Tambien recibe el reporte de calidad de datos, duplicados y recomendaciones comerciales calculadas por la plataforma.
+El contexto enviado se compacta para respetar limites de tokens: incluye KPI, calidad, crecimiento, top sedes/asesores/planes, tareas, iniciativas, importaciones y memoria previa.
 
 La pantalla `Configuracion > Integraciones` muestra el estado de Groq sin devolver la clave cruda al navegador. Si se deja el campo `Clave API Groq` vacio al guardar integraciones, la clave existente no se borra.
 
@@ -167,13 +179,24 @@ Healthcheck:
 http://localhost:4310/api/ai/health
 ```
 
+Memoria de IA:
+
+```text
+http://localhost:4310/api/ai/insights?year=2026&month=6
+```
+
+Cada consulta guarda:
+
+- snapshot compacto en `ai_context_snapshots`
+- respuesta en `ai_insights`
+- acciones de seguimiento en `ai_actions`
+
 ## Mejora de velocidad, tiempo real e IA
 
-La version actual usa SQLite con `sql.js`, que carga la base en memoria y exporta el archivo completo al guardar. Para datos actuales funciona, pero si crece el historico o se sincroniza EVO en tiempo real conviene:
+La version actual ya usa SQLite nativo con `better-sqlite3`, WAL, indices reales, cache de crecimiento por periodo, worker EVO con checkpoint y memoria de IA. Para la siguiente etapa conviene:
 
-- Cambiar a SQLite nativo (`better-sqlite3`) o Postgres para consultas e indices reales.
-- Crear tablas materializadas o cache de KPI por mes/sede/asesor.
-- Agregar indices por `client_external_id`, `plan_id`, `sold_at`, `source_type` y `source_key`.
-- Separar sincronizacion EVO en un worker con cola, checkpoint por fecha/id y reintentos.
-- Emitir actualizaciones al navegador con Server-Sent Events o WebSocket cuando entren ventas nuevas.
-- Mantener un registro de eventos comerciales para que la IA consulte contexto historico, calidad de datos, iniciativas, tareas y resultados sin recalcular todo.
+- Migrar a Postgres si se requiere multiusuario, nube o concurrencia alta.
+- Expandir cache a KPI por mes/sede/asesor y no solo crecimiento.
+- Agregar cola persistente de reintentos EVO si la API empieza a entregar cursor incremental por venta.
+- Convertir acciones IA aprobadas en tareas/iniciativas con auditoria.
+- Agregar busqueda semantica para documentos, observaciones y resultados historicos.

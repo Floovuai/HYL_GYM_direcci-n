@@ -287,6 +287,32 @@ function App() {
     });
   }, [load]);
 
+  React.useEffect(() => {
+    const events = new EventSource("/api/events");
+    events.addEventListener("sales_updated", (event) => {
+      try {
+        const payload = JSON.parse((event as MessageEvent).data);
+        const rows = Number(payload.rowsInserted ?? payload.summary?.rowsInserted ?? 0);
+        setNotice(rows > 0 ? `Ventas actualizadas en tiempo real: ${rows} nuevas.` : "Sincronizacion de ventas revisada.");
+      } catch {
+        setNotice("Ventas actualizadas en tiempo real.");
+      }
+      load().catch((error) => setNotice(error.message));
+    });
+    events.addEventListener("evo_sync", (event) => {
+      try {
+        const payload = JSON.parse((event as MessageEvent).data);
+        if (payload.status === "error") setNotice(`EVO: ${payload.error}`);
+      } catch {
+        // Evento informativo no critico.
+      }
+    });
+    events.onerror = () => {
+      setNotice("Reconectando actualizaciones en tiempo real...");
+    };
+    return () => events.close();
+  }, [load]);
+
   async function uploadExcel(file: File) {
     const data = new FormData();
     data.append("file", file);

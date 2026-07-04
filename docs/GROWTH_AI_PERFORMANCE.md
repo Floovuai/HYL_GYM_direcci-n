@@ -13,40 +13,42 @@ El modulo de crecimiento usa datos existentes:
 
 Esto permite retencion proxy, oportunidades por plan, simulaciones comerciales y recomendaciones operativas sin agregar nuevas tablas.
 
+## Implementado
+
+- SQLite nativo con `better-sqlite3`, WAL y transacciones directas sobre `data/hyl_gym.db`.
+- Indices para cliente, plan, fuente, periodo, sede, asesor y fecha de venta.
+- Cache de crecimiento en `metric_cache` con version de ventas por periodo.
+- Worker EVO con checkpoint en `evo_sync_checkpoints`.
+- Canal SSE `/api/events` para refrescar UI cuando entran ventas.
+- Memoria IA con `ai_context_snapshots`, `ai_insights` y `ai_actions`.
+
 ## Limites actuales
 
-- `sql.js` carga SQLite en memoria y exporta el archivo al persistir. Es portable, pero no es ideal para sincronizacion continua.
-- La sincronizacion EVO ocurre bajo demanda y con ventana minima de 5 minutos.
-- El churn es proxy de recompra, no churn real de membresia.
-- La IA recibe un resumen curado, no una memoria completa consultable.
+- El churn sigue siendo proxy de recompra porque faltan vencimientos reales y asistencia.
+- El worker EVO depende de la granularidad disponible en la API; hoy sincroniza por rango mensual e idempotencia de `sale_key`.
+- La IA ya tiene memoria consultable, pero aun no ejecuta acciones automaticamente sobre tareas/iniciativas sin confirmacion del usuario.
 
 ## Plan para hacerla mas rapida
 
-1. Migrar persistencia a `better-sqlite3` si se mantiene local.
-2. Si se quiere multiusuario o nube, migrar a Postgres.
-3. Agregar indices:
-   - `sales(client_external_id, year, month)`
-   - `sales(plan_id, year, month)`
-   - `sales(source_type, source_key)`
-   - `sales(sold_at)`
-4. Crear cache de agregados por periodo:
+1. Si se quiere multiusuario o nube, migrar a Postgres.
+2. Expandir cache de agregados por periodo:
    - ventas por sede
    - ventas por asesor
    - ventas por plan
    - recompra por mes
    - avance de metas
-5. Invalidar cache solo cuando entra una venta nueva o se importa un Excel.
+3. Invalidar cache solo cuando entra una venta nueva o se importa un Excel.
+4. Dividir el bundle frontend con imports dinamicos para bajar el JS inicial.
 
 ## Sincronizacion de ventas en tiempo real
 
-EVO deberia correr como proceso independiente al render del tablero:
+EVO ahora corre separado del render del tablero:
 
-1. `sync_jobs`: estado de sincronizacion por fuente, mes y cursor.
-2. Worker interno cada 30-60 segundos.
-3. Checkpoint por `sold_at` y/o id externo.
-4. Insercion idempotente usando `sale_key`.
-5. Evento interno cuando hay ventas nuevas.
-6. SSE o WebSocket para que el navegador reciba:
+1. `evo_sync_checkpoints`: estado de sincronizacion por mes y cursor.
+2. Worker interno cada 60 segundos por defecto.
+3. Insercion idempotente usando `sale_key`.
+4. Evento interno cuando hay ventas nuevas.
+5. SSE para que el navegador reciba:
    - ventas nuevas
    - ultima sincronizacion
    - errores EVO
@@ -73,11 +75,14 @@ Contexto disponible:
 - Metas y comisiones.
 - Importaciones y cobertura de datos.
 
-Capas recomendadas:
+Capas implementadas:
 
 1. `ai_context_snapshots`: snapshot mensual resumido.
 2. `ai_insights`: recomendaciones generadas, estado y resultado.
 3. `ai_actions`: acciones sugeridas que se convierten en tarea o iniciativa.
+
+Capa recomendada siguiente:
+
 4. Busqueda semantica opcional para documentos, reportes y observaciones.
 
 Primeras funciones inteligentes:
@@ -90,8 +95,7 @@ Primeras funciones inteligentes:
 
 ## Orden recomendado de implementacion
 
-1. Indices y cache de metricas.
-2. Worker EVO con checkpoint.
-3. SSE para actualizaciones de tablero.
-4. Registro de insights y acciones de IA.
-5. Churn real cuando existan vencimientos/asistencia.
+1. Convertir acciones IA seleccionadas en tareas con confirmacion.
+2. Cachear estado completo por periodo y no solo crecimiento.
+3. Churn real cuando existan vencimientos/asistencia.
+4. Busqueda semantica sobre documentos y observaciones.

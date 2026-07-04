@@ -15,6 +15,23 @@
 - `initiatives`: marketing, proyectos, convenios, requerimientos, planes e ideas.
 - `todos`: tareas del dia a dia.
 - `import_batches`: auditoria de importaciones.
+- `metric_cache`: cache de agregados por periodo con version de datos.
+- `evo_sync_checkpoints`: estado del worker/sync EVO por mes.
+- `ai_context_snapshots`: contexto compacto enviado a IA.
+- `ai_insights`: respuestas generadas por IA por periodo.
+- `ai_actions`: acciones sugeridas por IA para seguimiento.
+
+## Indices de rendimiento
+
+La tabla `sales` tiene indices para lectura operacional:
+
+- `idx_sales_period`: ano, mes y dia.
+- `idx_sales_branch_period`: sede y periodo.
+- `idx_sales_advisor_period`: asesor y periodo.
+- `idx_sales_client_period`: cliente externo y periodo, usado para recompra/churn proxy.
+- `idx_sales_plan_period`: plan y periodo.
+- `idx_sales_sold_at`: fecha/hora de venta.
+- `idx_sales_source`: fuente y llave de importacion.
 
 ## Deduplicacion
 
@@ -56,6 +73,8 @@ Variables de entorno tienen prioridad sobre SQLite para:
 - `EVO_BASE_URL`
 - `EVO_DNS`
 - `EVO_API_KEY` o `EVO_SECRET_KEY`
+- `EVO_SYNC_WORKER`
+- `EVO_SYNC_INTERVAL_MS`
 - `GROQ_API_KEY`
 - `GROQ_MODEL`
 

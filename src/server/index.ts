@@ -1,11 +1,12 @@
 import fs from "node:fs";
 import path from "node:path";
+import crypto from "node:crypto";
 import cors from "cors";
 import express from "express";
 import multer from "multer";
 import { loadLocalEnv, resolveFromRoot } from "./env";
 import { migrate } from "./schema";
-import { all, run, saveDb, scalar, transaction } from "./db";
+import { all, get, run, saveDb, scalar, transaction } from "./db";
 import {
   importSalesObjects,
   importSalesWorkbook,
@@ -30,11 +31,20 @@ const upload = multer({
 
 const EVO_DEFAULT_BASE_URL = "https://evo-integracao-api.w12app.com.br";
 const EVO_SALES_PATH = "/api/v2/sales";
-const EVO_AUTO_SYNC_INTERVAL_MS = 5 * 60 * 1000;
-const evoAutoSyncCache = new Map<string, number>();
+const EVO_SYNC_INTERVAL_MS = Math.max(15_000, Number(process.env.EVO_SYNC_INTERVAL_MS || 60_000));
+const EVO_SYNC_WORKER_ENABLED = process.env.EVO_SYNC_WORKER !== "0";
+const realtimeClients = new Set<express.Response>();
+let evoWorkerRunning = false;
 
 app.use(cors());
 app.use(express.json({ limit: "3mb" }));
+
+function publishRealtime(event: string, payload: unknown) {
+  const body = `event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`;
+  for (const client of realtimeClients) {
+    client.write(body);
+  }
+}
 
 function publicSettingRow(row: { key: string; value: string; secret?: number; updated_at?: string }) {
   const configured = row.secret
@@ -162,51 +172,159 @@ async function fetchEvoSales(settings: Record<string, any>, year: number, month:
   return { items, preview };
 }
 
-async function syncEvoSales(year: number, month: number, source = "manual") {
-  const settings = await integrationSettings();
-  if (!hasEvoSettings(settings)) {
-    throw new Error("Configura evo_base_url, evo_dns y evo_api_key primero");
-  }
-  const { items, preview } = await fetchEvoSales(settings, year, month);
-  if (!items.length) {
-    const error = new Error("La respuesta EVO no contiene una lista de ventas reconocible");
-    (error as Error & { preview?: unknown }).preview = preview;
-    throw error;
-  }
-
-  let summary;
-  await transaction(async () => {
-    summary = await importSalesObjects(items, {
-      sourceType: "evo",
-      sourceKey: `evo:${source}:${year}-${String(month).padStart(2, "0")}:${new Date().toISOString()}`,
-      replaceMonths: false
-    });
-  });
-  return summary;
+async function updateEvoCheckpoint(input: {
+  year: number;
+  month: number;
+  status: string;
+  startedAt?: string;
+  completedAt?: string | null;
+  error?: string;
+  rowsInserted?: number;
+  duplicatesSkipped?: number;
+  totalValue?: number;
+  cursor?: Record<string, unknown>;
+}) {
+  await run(
+    `INSERT INTO evo_sync_checkpoints (
+      source, year, month, last_started_at, last_completed_at, last_status, last_error,
+      last_rows_inserted, last_duplicates_skipped, last_total_value, cursor_json, updated_at
+    ) VALUES ('evo', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(source, year, month) DO UPDATE SET
+      last_started_at=COALESCE(excluded.last_started_at, evo_sync_checkpoints.last_started_at),
+      last_completed_at=COALESCE(excluded.last_completed_at, evo_sync_checkpoints.last_completed_at),
+      last_status=excluded.last_status,
+      last_error=excluded.last_error,
+      last_rows_inserted=excluded.last_rows_inserted,
+      last_duplicates_skipped=excluded.last_duplicates_skipped,
+      last_total_value=excluded.last_total_value,
+      cursor_json=excluded.cursor_json,
+      updated_at=CURRENT_TIMESTAMP`,
+    [
+      input.year,
+      input.month,
+      input.startedAt ?? null,
+      input.completedAt ?? null,
+      input.status,
+      input.error ?? "",
+      input.rowsInserted ?? 0,
+      input.duplicatesSkipped ?? 0,
+      input.totalValue ?? 0,
+      JSON.stringify(input.cursor ?? {})
+    ]
+  );
 }
 
-async function autoSyncEvoIfCurrentMonth(year?: number, month?: number) {
-  const period = currentBogotaPeriod();
-  const selectedYear = year || period.year;
-  const selectedMonth = month || period.month;
-  if (selectedYear !== period.year || selectedMonth !== period.month) return null;
-
+async function syncEvoSales(year: number, month: number, source = "manual") {
+  const startedAt = new Date().toISOString();
+  await updateEvoCheckpoint({
+    year,
+    month,
+    status: "running",
+    startedAt,
+    cursor: { source, startedAt }
+  });
   const settings = await integrationSettings();
-  if (!hasEvoSettings(settings)) return null;
-
-  const cacheKey = `${selectedYear}-${selectedMonth}`;
-  const now = Date.now();
-  const lastSync = evoAutoSyncCache.get(cacheKey) || 0;
-  if (now - lastSync < EVO_AUTO_SYNC_INTERVAL_MS) return null;
-
-  evoAutoSyncCache.set(cacheKey, now);
-  try {
-    return await syncEvoSales(selectedYear, selectedMonth, "auto");
-  } catch (error) {
-    evoAutoSyncCache.delete(cacheKey);
-    console.warn("No se pudo sincronizar EVO automaticamente:", error instanceof Error ? error.message : error);
-    return null;
+  if (!hasEvoSettings(settings)) {
+    await updateEvoCheckpoint({
+      year,
+      month,
+      status: "skipped",
+      startedAt,
+      completedAt: new Date().toISOString(),
+      error: "EVO no configurado",
+      cursor: { source }
+    });
+    throw new Error("Configura evo_base_url, evo_dns y evo_api_key primero");
   }
+  try {
+    const { items, preview } = await fetchEvoSales(settings, year, month);
+    if (!items.length) {
+      const error = new Error("La respuesta EVO no contiene una lista de ventas reconocible");
+      (error as Error & { preview?: unknown }).preview = preview;
+      throw error;
+    }
+
+    let summary;
+    await transaction(async () => {
+      summary = await importSalesObjects(items, {
+        sourceType: "evo",
+        sourceKey: `evo:${source}:${year}-${String(month).padStart(2, "0")}:${new Date().toISOString()}`,
+        replaceMonths: false
+      });
+    });
+    const completedAt = new Date().toISOString();
+    const safeSummary = summary as any;
+    await updateEvoCheckpoint({
+      year,
+      month,
+      status: "completed",
+      startedAt,
+      completedAt,
+      rowsInserted: Number(safeSummary?.rowsInserted || 0),
+      duplicatesSkipped: Number(safeSummary?.duplicatesSkipped || 0),
+      totalValue: Number(safeSummary?.totalValue || 0),
+      cursor: {
+        source,
+        itemsRecognized: items.length,
+        completedAt
+      }
+    });
+    publishRealtime("evo_sync", {
+      year,
+      month,
+      source,
+      summary: safeSummary,
+      completedAt
+    });
+    if (Number(safeSummary?.rowsInserted || 0) > 0) {
+      publishRealtime("sales_updated", {
+        year,
+        month,
+        rowsInserted: Number(safeSummary.rowsInserted || 0),
+        totalValue: Number(safeSummary.totalValue || 0)
+      });
+    }
+    return summary;
+  } catch (error) {
+    await updateEvoCheckpoint({
+      year,
+      month,
+      status: "error",
+      startedAt,
+      completedAt: new Date().toISOString(),
+      error: error instanceof Error ? error.message : "Error EVO",
+      cursor: { source }
+    });
+    publishRealtime("evo_sync", {
+      year,
+      month,
+      source,
+      status: "error",
+      error: error instanceof Error ? error.message : "Error EVO"
+    });
+    throw error;
+  }
+}
+
+async function runEvoWorkerOnce() {
+  if (evoWorkerRunning) return;
+  evoWorkerRunning = true;
+  try {
+    const settings = await integrationSettings();
+    if (!hasEvoSettings(settings)) return;
+    const period = currentBogotaPeriod();
+    await syncEvoSales(period.year, period.month, "worker");
+  } catch (error) {
+    console.warn("No se pudo sincronizar EVO en worker:", error instanceof Error ? error.message : error);
+  } finally {
+    evoWorkerRunning = false;
+  }
+}
+
+function startEvoWorker() {
+  if (!EVO_SYNC_WORKER_ENABLED) return;
+  setTimeout(() => runEvoWorkerOnce(), 8_000);
+  setInterval(() => runEvoWorkerOnce(), EVO_SYNC_INTERVAL_MS);
 }
 
 async function askGroq(apiKey: string, model: string, messages: Array<{ role: "system" | "user"; content: string }>, maxTokens = 900) {
@@ -225,6 +343,151 @@ async function askGroq(apiKey: string, model: string, messages: Array<{ role: "s
   });
   const json = await response.json();
   return { response, json };
+}
+
+function stableHash(value: unknown) {
+  return crypto.createHash("sha256").update(JSON.stringify(value)).digest("hex").slice(0, 24);
+}
+
+async function saveAiContextSnapshot(year: number, month: number, payload: unknown) {
+  const snapshotKey = `${year}-${String(month).padStart(2, "0")}:${stableHash(payload)}`;
+  await run(
+    `INSERT OR IGNORE INTO ai_context_snapshots (year, month, snapshot_key, payload)
+     VALUES (?, ?, ?, ?)`,
+    [year, month, snapshotKey, JSON.stringify(payload)]
+  );
+  const row = await get<{ id: number }>("SELECT id FROM ai_context_snapshots WHERE snapshot_key = ?", [snapshotKey]);
+  return row?.id ?? null;
+}
+
+async function saveAiInsight(input: {
+  year: number;
+  month: number;
+  snapshotId: number | null;
+  prompt: string;
+  answer: string;
+}) {
+  await run(
+    `INSERT INTO ai_insights (year, month, snapshot_id, prompt, answer, status)
+     VALUES (?, ?, ?, ?, ?, 'Generado')`,
+    [input.year, input.month, input.snapshotId, input.prompt, input.answer]
+  );
+  return scalar<number>("SELECT last_insert_rowid()");
+}
+
+async function saveAiActions(insightId: number | null, actions: Array<{ title: string; priority?: string; notes?: string }>) {
+  if (!insightId) return;
+  for (const action of actions.slice(0, 8)) {
+    await run(
+      `INSERT INTO ai_actions (insight_id, title, priority, notes)
+       VALUES (?, ?, ?, ?)`,
+      [insightId, action.title, action.priority || "Media", action.notes || ""]
+    );
+  }
+}
+
+async function recentAiMemory(year: number, month: number) {
+  const insights = await all<{ id: number; prompt: string; answer: string; created_at: string }>(
+    `SELECT id, prompt, answer, created_at
+     FROM ai_insights
+     WHERE year = ? AND month = ?
+     ORDER BY created_at DESC
+     LIMIT 5`,
+    [year, month]
+  );
+  if (!insights.length) return [];
+  const ids = insights.map((item) => item.id);
+  const placeholders = ids.map(() => "?").join(", ");
+  const actions = await all(
+    `SELECT * FROM ai_actions
+     WHERE insight_id IN (${placeholders})
+     ORDER BY created_at DESC`,
+    ids
+  );
+  return insights.map((insight) => ({
+    ...insight,
+    actions: actions.filter((action: any) => Number(action.insight_id) === Number(insight.id))
+  }));
+}
+
+function compactAiContext(state: any, aiMemory: any[]) {
+  return {
+    filtros: state.filters,
+    kpis: state.kpis,
+    calidadDatos: {
+      status: state.quality.status,
+      totalRows: state.quality.totalRows,
+      duplicateGroups: state.quality.duplicateGroups.length,
+      naturalDuplicateGroups: state.quality.naturalDuplicateGroups.length,
+      orphanSales: state.quality.orphanSales
+    },
+    crecimiento: state.growth
+      ? {
+          retention: state.growth.retention,
+          opportunities: state.growth.opportunities,
+          simulator: state.growth.simulator,
+          ltvScenarios: state.growth.ltvScenarios,
+          recommendations: state.growth.recommendations
+        }
+      : null,
+    recomendacionesSistema: state.recommendations.slice(0, 8),
+    sedes: state.branches.slice(0, 12).map((branch: any) => ({
+      name: branch.name,
+      sales: branch.sales,
+      rows: branch.rows,
+      score: branch.score?.score,
+      status: branch.score?.status,
+      progressMeta1: branch.score?.progressMeta1,
+      targetMeta1: branch.target?.meta1
+    })),
+    asesores: state.advisors.slice(0, 16).map((advisor: any) => ({
+      name: advisor.name,
+      branchName: advisor.branchName,
+      sales: advisor.sales,
+      rows: advisor.rows,
+      conversions: advisor.conversions,
+      score: advisor.score?.score,
+      status: advisor.score?.status,
+      commissionLevel: advisor.commission?.level,
+      missingMeta1: advisor.commission?.missingMeta1
+    })),
+    planes: state.plans.slice(0, 18).map((plan: any) => ({
+      name: plan.name,
+      category: plan.category,
+      sales: plan.sales,
+      rows: plan.rows,
+      cashPrice: plan.cash_price,
+      avgScore: plan.score?.score
+    })),
+    iniciativas: state.initiatives.slice(0, 12).map((item: any) => ({
+      title: item.title,
+      status: item.status,
+      type: item.type,
+      owner: item.owner
+    })),
+    tareas: state.todos.slice(0, 12).map((todo: any) => ({
+      title: todo.title,
+      status: todo.status,
+      priority: todo.priority,
+      owner: todo.owner
+    })),
+    importaciones: state.imports.slice(0, 5).map((item: any) => ({
+      sourceType: item.source_type,
+      rowsInserted: item.rows_inserted,
+      duplicatesSkipped: item.duplicates_skipped,
+      totalValue: item.total_value,
+      importedAt: item.imported_at
+    })),
+    memoriaIa: aiMemory.map((memory: any) => ({
+      prompt: memory.prompt,
+      createdAt: memory.created_at,
+      actions: memory.actions?.map((action: any) => ({
+        title: action.title,
+        status: action.status,
+        priority: action.priority
+      }))
+    }))
+  };
 }
 
 app.get("/api/health", async (_req, res, next) => {
@@ -247,11 +510,24 @@ app.get("/api/state", async (req, res, next) => {
   try {
     const year = req.query.year ? Number(req.query.year) : undefined;
     const month = req.query.month ? Number(req.query.month) : undefined;
-    await autoSyncEvoIfCurrentMonth(year, month);
     res.json(await buildAppState(year, month));
   } catch (error) {
     next(error);
   }
+});
+
+app.get("/api/events", (req, res) => {
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive",
+    "X-Accel-Buffering": "no"
+  });
+  res.write(`event: connected\ndata: ${JSON.stringify({ ok: true, now: new Date().toISOString() })}\n\n`);
+  realtimeClients.add(res);
+  req.on("close", () => {
+    realtimeClients.delete(res);
+  });
 });
 
 app.get("/api/quality/duplicates", async (req, res, next) => {
@@ -268,8 +544,25 @@ app.get("/api/reports/gerencial", async (req, res, next) => {
   try {
     const year = Number(req.query.year || new Date().getFullYear());
     const month = Number(req.query.month || new Date().getMonth() + 1);
-    await autoSyncEvoIfCurrentMonth(year, month);
     res.json(await buildManagerReport(year, month));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/evo/status", async (req, res, next) => {
+  try {
+    const year = req.query.year ? Number(req.query.year) : undefined;
+    const month = req.query.month ? Number(req.query.month) : undefined;
+    const where = year && month ? "WHERE year = ? AND month = ?" : "";
+    const params = year && month ? [year, month] : undefined;
+    const rows = await all(
+      `SELECT * FROM evo_sync_checkpoints ${where}
+       ORDER BY updated_at DESC
+       LIMIT 12`,
+      params
+    );
+    res.json({ workerEnabled: EVO_SYNC_WORKER_ENABLED, intervalMs: EVO_SYNC_INTERVAL_MS, checkpoints: rows });
   } catch (error) {
     next(error);
   }
@@ -328,6 +621,11 @@ app.post("/api/import/sales-excel", upload.single("file"), async (req, res, next
         replaceMonths: false
       });
     });
+    publishRealtime("sales_updated", {
+      source: "excel_upload",
+      summary,
+      importedAt: new Date().toISOString()
+    });
     res.json({ ok: true, summary });
   } catch (error) {
     next(error);
@@ -362,25 +660,22 @@ app.post("/api/ai/ask", async (req, res, next) => {
       return;
     }
     const state = await buildAppState(Number(req.body?.year) || undefined, Number(req.body?.month) || undefined);
+    const year = Number(state.filters.selectedYear);
+    const month = Number(state.filters.selectedMonth);
+    const aiMemory = await recentAiMemory(year, month);
+    const contexto = compactAiContext(state, aiMemory);
+    const snapshotId = await saveAiContextSnapshot(year, month, { prompt, contexto });
     const { response, json } = await askGroq(apiKey, model, [
       {
         role: "system",
         content:
-          "Eres un analista comercial senior de HYL Gym. Responde en espanol, con acciones concretas y priorizadas. Debes revisar calidad de datos, duplicados, score, metas, comisiones y rendimiento de asesores/sedes antes de sugerir acciones. Usa solo los datos entregados; no inventes cifras."
+          "Eres un analista comercial senior de HYL Gym. Responde en espanol, con acciones concretas y priorizadas. Debes revisar calidad de datos, duplicados, score, metas, comisiones, crecimiento, recompra, planes y rendimiento de asesores/sedes antes de sugerir acciones. Usa solo los datos entregados; no inventes cifras. Si hay memoria de IA previa, compara contra acciones anteriores."
       },
       {
         role: "user",
         content: JSON.stringify({
           prompt,
-          contexto: {
-            filtros: state.filters,
-            kpis: state.kpis,
-            calidadDatos: state.quality,
-            recomendacionesSistema: state.recommendations,
-            sedes: state.branches,
-            asesores: state.advisors.slice(0, 20),
-            planes: state.plans.slice(0, 20)
-          }
+          contexto
         })
       }
     ]);
@@ -388,7 +683,32 @@ app.post("/api/ai/ask", async (req, res, next) => {
       res.status(response.status).json({ error: json?.error?.message || "Groq no pudo responder" });
       return;
     }
-    res.json({ ok: true, answer: json.choices?.[0]?.message?.content ?? "" });
+    const answer = json.choices?.[0]?.message?.content ?? "";
+    const insightId = await saveAiInsight({ year, month, snapshotId, prompt, answer });
+    await saveAiActions(insightId, [
+      ...(state.growth?.recommendations ?? []).map((item: any) => ({
+        title: item.title,
+        priority: item.priority,
+        notes: `${item.detail} (${item.metric})`
+      })),
+      ...state.recommendations.slice(0, 4).map((item: any) => ({
+        title: item.title,
+        priority: item.priority,
+        notes: `${item.detail} (${item.metric})`
+      }))
+    ]);
+    res.json({ ok: true, answer, insightId, snapshotId });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/ai/insights", async (req, res, next) => {
+  try {
+    const period = currentBogotaPeriod();
+    const year = Number(req.query.year || period.year);
+    const month = Number(req.query.month || period.month);
+    res.json({ year, month, insights: await recentAiMemory(year, month) });
   } catch (error) {
     next(error);
   }
@@ -651,7 +971,9 @@ async function bootstrap() {
   });
   const sales = (await scalar<number>("SELECT COUNT(*) FROM sales")) ?? 0;
   console.log(`HYL Gym Direccion API lista en http://localhost:${port} (${sales} ventas)`);
-  app.listen(port, host);
+  app.listen(port, host, () => {
+    startEvoWorker();
+  });
 }
 
 bootstrap().catch(async (error) => {
