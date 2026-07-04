@@ -6,7 +6,8 @@ import {
   calculateDirectorCommission,
   commissionSchemeForPeriod,
   DEFAULT_SCORE_SETTINGS,
-  monthName
+  monthName,
+  normalizeKey
 } from "../shared/business";
 import type { AdvisorTarget, BranchTarget, EvaluationInput } from "../shared/types";
 import { all, get, scalar } from "./db";
@@ -371,6 +372,7 @@ export async function buildAppState(year?: number, month?: number) {
      ORDER BY sales DESC`,
     [selectedYear, selectedMonth]
   );
+  const growth = await buildIntelligentGrowth(selectedYear, selectedMonth);
 
   const marketing = await all<AnyRow>(
     `SELECT * FROM initiatives
@@ -502,6 +504,7 @@ export async function buildAppState(year?: number, month?: number) {
     imports,
     quality,
     recommendations,
+    growth,
     settings: publicSettings(settingMap),
     boardReports: {
       byBranch: branches,
@@ -783,6 +786,285 @@ export async function buildManagerReport(year: number, month: number) {
     unassignedSales: num(unassignedSales),
     supportEvoSales: num(supportEvoSales),
     topDays
+  };
+}
+
+function previousPeriod(year: number, month: number) {
+  return month === 1 ? { year: year - 1, month: 12 } : { year, month: month - 1 };
+}
+
+function planFamily(name: string) {
+  const value = normalizeKey(name);
+  if (value.includes("DUO")) return "Duo";
+  if (value.includes("CORPORATIVO")) return "Corporativo";
+  if (value.includes("HORA VALLE")) return "Hora valle";
+  if (value.includes("WEB")) return "Web";
+  if (value.includes("2 SESIONES")) return "Con sesiones";
+  if (value.includes("MES")) return "Mensual/base";
+  if (["TRIMESTRE", "BIMESTRE", "SEMESTRE", "ANUAL", "13 MESES", "14 MESES", "4 MESES", "5 MESES", "7 MESES"].some((token) => value.includes(token))) {
+    return "Duracion larga";
+  }
+  return "Otros";
+}
+
+async function buildIntelligentGrowth(year: number, month: number) {
+  const previous = previousPeriod(year, month);
+  const previousClientRows = await all<AnyRow>(
+    `SELECT DISTINCT client_external_id client
+     FROM sales
+     WHERE year = ? AND month = ? AND value > 0 AND client_external_id IS NOT NULL AND client_external_id <> ''`,
+    [previous.year, previous.month]
+  );
+  const currentClientRows = await all<AnyRow>(
+    `SELECT s.client_external_id client, s.branch_id, b.display_name branch, s.advisor_id, a.name advisor, COALESCE(SUM(s.value), 0) revenue
+     FROM sales s
+     LEFT JOIN branches b ON b.id = s.branch_id
+     LEFT JOIN advisors a ON a.id = s.advisor_id
+     WHERE s.year = ? AND s.month = ? AND s.value > 0 AND s.client_external_id IS NOT NULL AND s.client_external_id <> ''
+     GROUP BY s.client_external_id, s.branch_id, s.advisor_id`,
+    [year, month]
+  );
+
+  const previousClientSet = new Set(previousClientRows.map((row) => String(row.client)));
+  const currentRevenueByClient = new Map<string, number>();
+  for (const row of currentClientRows) {
+    const client = String(row.client);
+    currentRevenueByClient.set(client, (currentRevenueByClient.get(client) ?? 0) + num(row.revenue));
+  }
+  const currentClients = currentRevenueByClient.size;
+  const previousClients = previousClientSet.size;
+  const selectedRevenue = Array.from(currentRevenueByClient.values()).reduce((sum, value) => sum + value, 0);
+  const retainedClientSet = new Set(Array.from(currentRevenueByClient.keys()).filter((client) => previousClientSet.has(client)));
+  const retainedClients = retainedClientSet.size;
+  const retainedRevenue = Array.from(retainedClientSet).reduce((sum, client) => sum + (currentRevenueByClient.get(client) ?? 0), 0);
+  const lostClients = Math.max(previousClients - retainedClients, 0);
+  const retentionRate = previousClients > 0 ? retainedClients / previousClients : 0;
+
+  const branchMap = new Map<string, { branch: string; clients: Set<string>; revenue: number }>();
+  const advisorMap = new Map<string, { advisor: string; branch: string; clients: Set<string>; revenue: number }>();
+  for (const row of currentClientRows) {
+    const client = String(row.client);
+    if (!retainedClientSet.has(client)) continue;
+    const branch = row.branch || "Sin sede";
+    const branchBucket = branchMap.get(branch) ?? { branch, clients: new Set<string>(), revenue: 0 };
+    branchBucket.clients.add(client);
+    branchBucket.revenue += num(row.revenue);
+    branchMap.set(branch, branchBucket);
+
+    const advisor = row.advisor || "Sin asesor";
+    const advisorKey = advisor + "|" + branch;
+    const advisorBucket = advisorMap.get(advisorKey) ?? { advisor, branch, clients: new Set<string>(), revenue: 0 };
+    advisorBucket.clients.add(client);
+    advisorBucket.revenue += num(row.revenue);
+    advisorMap.set(advisorKey, advisorBucket);
+  }
+  const retainedByBranch = Array.from(branchMap.values())
+    .map((item) => ({ branch: item.branch, clients: item.clients.size, revenue: item.revenue }))
+    .sort((a, b) => b.revenue - a.revenue)
+    .slice(0, 12);
+  const retainedByAdvisor = Array.from(advisorMap.values())
+    .map((item) => ({ advisor: item.advisor, branch: item.branch, clients: item.clients.size, revenue: item.revenue }))
+    .sort((a, b) => b.revenue - a.revenue)
+    .slice(0, 20);
+
+  const planRows = await all<AnyRow>(
+    `SELECT p.id, p.name, p.category, p.cash_price, p.card_price, p.cost_per_month,
+       COUNT(s.id) rows, COUNT(DISTINCT s.client_external_id) clients, COALESCE(SUM(s.value), 0) revenue, AVG(NULLIF(s.value, 0)) avg_ticket
+     FROM plans p
+     LEFT JOIN sales s ON s.plan_id = p.id AND s.year = ? AND s.month = ? AND s.value > 0
+     GROUP BY p.id
+     HAVING revenue > 0
+     ORDER BY revenue DESC`,
+    [year, month]
+  );
+
+  const familyMap = new Map<string, { family: string; rows: number; clients: number; revenue: number; avgTicketNumerator: number }>();
+  for (const row of planRows) {
+    const family = planFamily(row.name);
+    const current = familyMap.get(family) ?? { family, rows: 0, clients: 0, revenue: 0, avgTicketNumerator: 0 };
+    current.rows += num(row.rows);
+    current.clients += num(row.clients);
+    current.revenue += num(row.revenue);
+    current.avgTicketNumerator += num(row.avg_ticket) * num(row.rows);
+    familyMap.set(family, current);
+  }
+  const planFamilies = Array.from(familyMap.values())
+    .map((item) => ({
+      family: item.family,
+      rows: item.rows,
+      clients: item.clients,
+      revenue: item.revenue,
+      avgTicket: item.rows > 0 ? item.avgTicketNumerator / item.rows : 0
+    }))
+    .sort((a, b) => b.revenue - a.revenue);
+
+  const findPlan = (matcher: (name: string) => boolean) => planRows.find((plan) => matcher(normalizeKey(plan.name))) ?? null;
+  const monthPlan = findPlan((name) => name === "MES");
+  const twoDayPlan = findPlan((name) => name.includes("2 DIAS"));
+  const duoPlan = findPlan((name) => name.includes("DUO") && name.includes("6 MESES"));
+  const valleyPlan = findPlan((name) => name.includes("HORA VALLE"));
+  const corporatePlan = findPlan((name) => name.includes("CORPORATIVO"));
+
+  const avgRevenuePerClient = currentClients > 0 ? selectedRevenue / currentClients : 0;
+
+  const monthClients = num(monthPlan?.clients);
+  const monthAvg = num(monthPlan?.avg_ticket) || num(monthPlan?.cash_price) || avgRevenuePerClient;
+  const twoDayClients = num(twoDayPlan?.clients);
+  const twoDayAvg = num(twoDayPlan?.avg_ticket) || num(twoDayPlan?.cash_price) || 0;
+  const duoAvg = num(duoPlan?.avg_ticket) || num(duoPlan?.cash_price) || 379500;
+  const valleyPrice = num(valleyPlan?.cash_price) || 85000;
+  const corporatePrice = num(corporatePlan?.cash_price) || 79000;
+
+  const simulator = [
+    {
+      id: "upgrade_mes_duo",
+      name: "Upgrade MES a DUO 6 meses",
+      assumption: "Convertir 5% de clientes MES al ticket promedio DUO 6 meses",
+      segment: "Clientes MES",
+      baseClients: monthClients,
+      impact: Math.round(monthClients * 0.05 * Math.max(duoAvg - monthAvg, 0))
+    },
+    {
+      id: "hora_valle",
+      name: "Hora valle desde 2 DIAS",
+      assumption: "Convertir 10% de 2 DIAS y sumar 50 nuevos miembros hora valle",
+      segment: "2 DIAS + nuevos",
+      baseClients: twoDayClients,
+      impact: Math.round(twoDayClients * 0.1 * Math.max(valleyPrice - twoDayAvg, 0) + 50 * valleyPrice)
+    },
+    {
+      id: "corporativo",
+      name: "Paquete corporativo",
+      assumption: "150 nuevos corporativos con 20% de canibalizacion de MES",
+      segment: "Empresas",
+      baseClients: 150,
+      impact: Math.round(150 * corporatePrice - 30 * monthAvg)
+    },
+    {
+      id: "retention_lift",
+      name: "Mejorar recompra 3 puntos",
+      assumption: "Subir la recompra proxy del mes anterior en 3 puntos porcentuales",
+      segment: "Clientes no recomprados",
+      baseClients: previousClients,
+      impact: Math.round(previousClients * 0.03 * avgRevenuePerClient)
+    },
+    {
+      id: "pt_upsell",
+      name: "Entrenamiento personal",
+      assumption: "Vender ticket de $109.000 al 5% de clientes del mes",
+      segment: "Clientes activos",
+      baseClients: currentClients,
+      impact: Math.round(currentClients * 0.05 * 109000)
+    },
+    {
+      id: "wellness_bundle",
+      name: "Nutricion + clases premium + merchandise",
+      assumption: "Nutricion 3%, clases premium 8% y merchandise 5%",
+      segment: "Clientes activos",
+      baseClients: currentClients,
+      impact: Math.round(currentClients * 0.03 * 69000 + currentClients * 0.08 * 35000 + currentClients * 0.05 * 45000)
+    }
+  ];
+
+  const opportunities = [
+    {
+      title: "Convertir MES recurrente a planes largos o DUO",
+      segment: "MES",
+      clients: monthClients,
+      currentTicket: monthAvg,
+      targetTicket: duoAvg,
+      potential: simulator[0].impact,
+      action: "Priorizar clientes MES que ya compraron mas de una vez y ofrecer DUO, trimestre o semestre."
+    },
+    {
+      title: "Mover 2 DIAS hacia HORA VALLE",
+      segment: "2 DIAS",
+      clients: twoDayClients,
+      currentTicket: twoDayAvg,
+      targetTicket: valleyPrice,
+      potential: simulator[1].impact,
+      action: "Usar 2 DIAS como producto de entrada y cerrar membresia de horario valle antes de ampliar descuentos."
+    },
+    {
+      title: "Abrir paquete corporativo por sede",
+      segment: "Empresas",
+      clients: 150,
+      currentTicket: monthAvg,
+      targetTicket: corporatePrice,
+      potential: simulator[2].impact,
+      action: "Asignar prospeccion semanal por sede y medir ventas corporativas separadas de planes base."
+    },
+    {
+      title: "Monetizar servicios premium no capturados",
+      segment: "Upsell",
+      clients: currentClients,
+      currentTicket: 0,
+      targetTicket: 109000,
+      potential: simulator[4].impact + simulator[5].impact,
+      action: "Separar entrenamiento, nutricion, clases premium y merchandise como productos para medir adopcion real."
+    }
+  ];
+
+  const ltvScenarios = [0.25, 0.2, 0.15, 0.1].map((monthlyChurn) => ({
+    monthlyChurn,
+    revenueLtv: monthlyChurn > 0 ? Math.round(avgRevenuePerClient / monthlyChurn) : 0,
+    grossLtv60: monthlyChurn > 0 ? Math.round((avgRevenuePerClient * 0.6) / monthlyChurn) : 0,
+    cacTarget3x: monthlyChurn > 0 ? Math.round(((avgRevenuePerClient * 0.6) / monthlyChurn) / 3) : 0
+  }));
+
+  const recommendations = [
+    retainedClients > 0
+      ? {
+          priority: "Alta",
+          title: "Premiar y replicar recompra por asesor",
+          detail: "La recompra proxy es " + Math.round(retentionRate * 100) + "%. Usar el guion de los asesores con mayor recompra antes de aumentar descuentos.",
+          metric: retainedClients + " clientes recompraron"
+        }
+      : {
+          priority: "Alta",
+          title: "Activar medicion de recompra",
+          detail: "No hay recompra visible para el filtro. Validar si el periodo esta incompleto o si las ventas no tienen cliente externo.",
+          metric: previousClients + " clientes en el mes anterior"
+        },
+    {
+      priority: "Alta",
+      title: "Lanzar piloto de upgrades MES",
+      detail: "El plan MES concentra " + monthClients + " clientes. Un piloto de 5% hacia DUO/planes largos simula " + compactCurrency(simulator[0].impact) + " adicionales.",
+      metric: monthClients + " candidatos MES"
+    },
+    {
+      priority: "Media",
+      title: "Convertir compradores de 2 DIAS",
+      detail: "Hay " + twoDayClients + " clientes en 2 DIAS. Hora valle permite subir permanencia sin romper precio base.",
+      metric: compactCurrency(simulator[1].impact) + " potencial simulado"
+    },
+    {
+      priority: "Media",
+      title: "Crear SKUs de upsell",
+      detail: "La base actual casi no separa entrenamiento, nutricion, clases premium ni merchandise. Sin SKU separado no se puede medir adopcion ni margen.",
+      metric: compactCurrency(simulator[4].impact + simulator[5].impact) + " potencial simulado"
+    }
+  ];
+
+  return {
+    period: { year, month, previousYear: previous.year, previousMonth: previous.month },
+    retention: {
+      previousClients,
+      currentClients,
+      retainedClients,
+      lostClients,
+      retentionRate,
+      churnProxy: previousClients > 0 ? lostClients / previousClients : 0,
+      retainedRevenue,
+      avgRevenuePerClient,
+      byBranch: retainedByBranch.map((row) => ({ branch: row.branch || "Sin sede", clients: num(row.clients), revenue: num(row.revenue) })),
+      byAdvisor: retainedByAdvisor.map((row) => ({ advisor: row.advisor || "Sin asesor", branch: row.branch || "Sin sede", clients: num(row.clients), revenue: num(row.revenue) }))
+    },
+    planFamilies,
+    opportunities,
+    simulator,
+    ltvScenarios,
+    recommendations
   };
 }
 

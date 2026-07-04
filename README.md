@@ -18,6 +18,18 @@ npm run seed
 npm run dev
 ```
 
+Opcion Docker:
+
+```bash
+docker compose up -d --build
+```
+
+Si el puerto `4310` ya esta ocupado en el PC:
+
+```bash
+APP_PORT=4314 docker compose up -d --build
+```
+
 Abrir:
 
 ```text
@@ -52,6 +64,15 @@ data/hyl_gym.db
 ```
 
 Cada escritura se hace en transaccion y se persiste al archivo SQLite.
+
+En Docker, `data/` y `uploads/` se montan como volumenes bind del proyecto:
+
+```text
+./data:/app/data
+./uploads:/app/uploads
+```
+
+Eso conserva la base y los archivos cargados aunque se reconstruya la imagen.
 
 ## Exportar PDF
 
@@ -116,3 +137,13 @@ npm test
 npm run build
 npm audit
 ```
+
+Verificacion Docker:
+
+```bash
+APP_PORT=4314 docker compose up -d --build
+curl http://localhost:4314/api/health
+docker compose down
+```
+
+Nota: `docker compose config` puede imprimir variables de `.env`; no compartas esa salida si tienes claves EVO o Groq configuradas.

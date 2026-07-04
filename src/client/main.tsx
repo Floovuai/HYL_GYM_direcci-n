@@ -14,6 +14,7 @@ import {
   RefreshCcw,
   Settings,
   Sparkles,
+  TrendingUp,
   Upload,
   Users
 } from "lucide-react";
@@ -32,7 +33,7 @@ import {
 } from "recharts";
 import "./styles.css";
 
-type TabId = "dashboard" | "advisors" | "branches" | "marketing" | "board" | "direction" | "settings" | "todos";
+type TabId = "dashboard" | "advisors" | "branches" | "marketing" | "growth" | "board" | "direction" | "settings" | "todos";
 
 type AppState = any;
 
@@ -41,6 +42,7 @@ const tabs: Array<{ id: TabId; label: string; icon: React.ElementType }> = [
   { id: "advisors", label: "Asesores", icon: Users },
   { id: "branches", label: "Sedes", icon: Building2 },
   { id: "marketing", label: "Mercadeo", icon: Megaphone },
+  { id: "growth", label: "Crecimiento", icon: TrendingUp },
   { id: "board", label: "Informes gerenciales", icon: ClipboardList },
   { id: "direction", label: "Dirección", icon: Sparkles },
   { id: "settings", label: "Configuración", icon: Settings },
@@ -374,6 +376,7 @@ function App() {
             {tab === "advisors" && <Advisors state={state} year={year} month={month} onReload={load} />}
             {tab === "branches" && <Branches state={state} />}
             {tab === "marketing" && <Marketing state={state} onReload={load} />}
+            {tab === "growth" && <IntelligentGrowth state={state} />}
             {tab === "board" && <BoardReports state={state} year={year} month={month} />}
             {tab === "direction" && <Direction state={state} year={year} month={month} onReload={load} setNotice={setNotice} />}
             {tab === "settings" && <Configuration state={state} onReload={load} setNotice={setNotice} />}
@@ -550,6 +553,177 @@ function CalendarHeatmap({ days }: { days: any[] }) {
           </div>
         );
       })}
+    </div>
+  );
+}
+
+function IntelligentGrowth({ state }: { state: AppState }) {
+  const [growthTab, setGrowthTab] = React.useState<"retention" | "plans" | "simulator" | "recommendations">("retention");
+  const growth = state.growth;
+  if (!growth) return <Empty />;
+  const retention = growth.retention;
+  const totalSimulatedImpact = growth.simulator.reduce((sum: number, item: any) => sum + Number(item.impact || 0), 0);
+  const branchRetention = retention.byBranch.slice(0, 8).map((item: any) => ({ ...item, chartName: branchShortName(item.branch) }));
+  const subTabs = [
+    { id: "retention", label: "Retención" },
+    { id: "plans", label: "Oportunidades por plan" },
+    { id: "simulator", label: "Simulador comercial" },
+    { id: "recommendations", label: "Recomendaciones" }
+  ];
+
+  return (
+    <div className="view growth-view">
+      <div className="kpi-grid">
+        <Kpi label="Recompra proxy" value={ratePercent(retention.retentionRate)} sub={retention.previousClients + " clientes mes anterior"} />
+        <Kpi label="Clientes recomprados" value={String(retention.retainedClients)} sub={currency(retention.retainedRevenue)} tone="blue" />
+        <Kpi label="Clientes sin recompra" value={String(retention.lostClients)} sub={ratePercent(retention.churnProxy) + " proxy"} tone="red" />
+        <Kpi label="Potencial simulado" value={compactCurrency(totalSimulatedImpact)} sub="escenarios combinados" tone="amber" />
+      </div>
+
+      <div className="config-tabs growth-tabs" role="tablist" aria-label="Crecimiento inteligente">
+        {subTabs.map((item) => (
+          <button key={item.id} className={growthTab === item.id ? "active" : ""} onClick={() => setGrowthTab(item.id as any)}>{item.label}</button>
+        ))}
+      </div>
+
+      {growthTab === "retention" ? (
+        <div className="grid two">
+          <section className="panel">
+            <div className="panel-title"><h2>Recompra por sede</h2><Building2 size={18} /></div>
+            <ResponsiveContainer width="100%" height={310}>
+              <BarChart data={branchRetention} margin={{ top: 8, right: 8, bottom: 28, left: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                <XAxis dataKey="chartName" interval={0} tick={<SplitTick />} height={48} />
+                <YAxis tickFormatter={compact} width={58} />
+                <Tooltip formatter={(value, name) => name === "revenue" ? currency(Number(value)) : Number(value).toLocaleString("es-CO")} />
+                <Bar dataKey="revenue" fill="#18715c" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </section>
+          <section className="panel">
+            <div className="panel-title"><h2>Asesores con recompra</h2><Users size={18} /></div>
+            <div className="table-wrap small">
+              <table>
+                <thead><tr><th>Asesor</th><th>Sede</th><th>Clientes</th><th>Ingreso</th></tr></thead>
+                <tbody>
+                  {retention.byAdvisor.slice(0, 12).map((item: any, index: number) => (
+                    <tr key={item.advisor + item.branch + index}>
+                      <td>{advisorDisplayName(item.advisor)}</td>
+                      <td>{item.branch}</td>
+                      <td>{item.clients}</td>
+                      <td>{currency(item.revenue)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {growthTab === "plans" ? (
+        <div className="grid two">
+          <section className="panel">
+            <div className="panel-title"><h2>Oportunidades accionables</h2><TrendingUp size={18} /></div>
+            <div className="opportunity-grid">
+              {growth.opportunities.map((item: any) => (
+                <article key={item.title} className="opportunity-card">
+                  <header><strong>{item.title}</strong><span>{item.segment}</span></header>
+                  <div className="metric-row"><span>Clientes base</span><strong>{item.clients}</strong></div>
+                  <div className="metric-row"><span>Ticket actual</span><strong>{currency(item.currentTicket)}</strong></div>
+                  <div className="metric-row"><span>Potencial</span><strong>{currency(item.potential)}</strong></div>
+                  <p>{item.action}</p>
+                </article>
+              ))}
+            </div>
+          </section>
+          <section className="panel">
+            <div className="panel-title"><h2>Familias de planes</h2><FileSpreadsheet size={18} /></div>
+            <div className="table-wrap small">
+              <table>
+                <thead><tr><th>Familia</th><th>Clientes</th><th>Ticket</th><th>Ventas</th></tr></thead>
+                <tbody>
+                  {growth.planFamilies.map((item: any) => (
+                    <tr key={item.family}>
+                      <td>{item.family}</td>
+                      <td>{item.clients}</td>
+                      <td>{currency(item.avgTicket)}</td>
+                      <td>{currency(item.revenue)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {growthTab === "simulator" ? (
+        <div className="grid two">
+          <section className="panel">
+            <div className="panel-title"><h2>Escenarios comerciales</h2><LineChart size={18} /></div>
+            <div className="scenario-grid">
+              {growth.simulator.map((item: any) => (
+                <article key={item.id} className="scenario-card">
+                  <span>{item.segment}</span>
+                  <strong>{item.name}</strong>
+                  <p>{item.assumption}</p>
+                  <div className="metric-row"><span>Base</span><strong>{item.baseClients}</strong></div>
+                  <div className="metric-row"><span>Impacto</span><strong>{currency(item.impact)}</strong></div>
+                </article>
+              ))}
+            </div>
+          </section>
+          <section className="panel">
+            <div className="panel-title"><h2>LTV y CAC objetivo</h2><BarChart3 size={18} /></div>
+            <div className="table-wrap small">
+              <table>
+                <thead><tr><th>Churn mensual</th><th>LTV ingreso</th><th>LTV bruto 60%</th><th>CAC 3:1</th></tr></thead>
+                <tbody>
+                  {growth.ltvScenarios.map((item: any) => (
+                    <tr key={item.monthlyChurn}>
+                      <td>{ratePercent(item.monthlyChurn)}</td>
+                      <td>{currency(item.revenueLtv)}</td>
+                      <td>{currency(item.grossLtv60)}</td>
+                      <td>{currency(item.cacTarget3x)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="growth-note">
+              <strong>Lectura operativa</strong>
+              <span>Estos escenarios usan ventas, clientes y tickets reales del periodo filtrado. El churn sigue siendo proxy hasta conectar vencimientos y asistencia.</span>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {growthTab === "recommendations" ? (
+        <div className="grid two">
+          <section className="panel">
+            <div className="panel-title"><h2>Acciones priorizadas</h2><Sparkles size={18} /></div>
+            <div className="recommendation-list growth-recommendations">
+              {growth.recommendations.map((item: any, index: number) => (
+                <article key={item.title + index} className="recommendation">
+                  <strong>{item.title}</strong>
+                  <span>{item.priority}</span>
+                  <p>{item.detail}</p>
+                  <small>{item.metric}</small>
+                </article>
+              ))}
+            </div>
+          </section>
+          <section className="panel">
+            <div className="panel-title"><h2>Datos faltantes para IA predictiva</h2><ClipboardList size={18} /></div>
+            <div className="data-gap-list">
+              {["Vencimiento real de membresia", "Asistencia/check-ins", "Segmento del miembro", "Objetivo de entrenamiento", "Costos por sede y producto", "SKUs separados de upsell"].map((item) => (
+                <article key={item}><strong>{item}</strong><span>Necesario para churn predictivo, margen o recomendacion personalizada.</span></article>
+              ))}
+            </div>
+          </section>
+        </div>
+      ) : null}
     </div>
   );
 }

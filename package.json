@@ -9,6 +9,7 @@
     "server": "set NODE_OPTIONS=--use-system-ca&& tsx watch src/server/index.ts",
     "build": "tsc --noEmit && vite build",
     "start": "set NODE_OPTIONS=--use-system-ca&& tsx src/server/index.ts",
+    "start:container": "tsx src/server/index.ts",
     "seed": "tsx src/server/seed.ts",
     "test": "vitest run",
     "db:reset": "tsx src/server/seed.ts --reset"

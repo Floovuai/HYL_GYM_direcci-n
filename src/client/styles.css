@@ -1034,6 +1034,82 @@ td small {
   color: var(--ink-soft);
 }
 
+.growth-view {
+  align-content: start;
+}
+
+.growth-tabs {
+  width: fit-content;
+  max-width: 100%;
+}
+
+.opportunity-grid,
+.scenario-grid,
+.data-gap-list {
+  display: grid;
+  gap: 10px;
+}
+
+.opportunity-card,
+.scenario-card,
+.data-gap-list article,
+.growth-note {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfa;
+}
+
+.opportunity-card header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.opportunity-card header span,
+.scenario-card > span {
+  min-height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 9px;
+  border-radius: 999px;
+  color: var(--green);
+  background: #e8f6ef;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.opportunity-card p,
+.scenario-card p,
+.growth-note span,
+.data-gap-list span {
+  margin: 0;
+  color: var(--ink-soft);
+  line-height: 1.42;
+}
+
+.scenario-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.scenario-card strong {
+  font-size: 16px;
+}
+
+.growth-note {
+  margin-top: 12px;
+  background: #eef6f2;
+}
+
+.growth-recommendations {
+  margin-bottom: 0;
+}
+
 .todo {
   display: grid;
   grid-template-columns: 40px 1fr auto;

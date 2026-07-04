@@ -1,0 +1,26 @@
+services:
+  hyl-gym:
+    build:
+      context: .
+      target: runtime
+    image: hyl-gym-direccion:local
+    container_name: hyl-gym-direccion
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      HOST: 0.0.0.0
+      PORT: 4310
+      DATABASE_PATH: /app/data/hyl_gym.db
+      UPLOAD_DIR: /app/uploads
+    ports:
+      - "${APP_PORT:-4310}:4310"
+    volumes:
+      - ./data:/app/data
+      - ./uploads:/app/uploads
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4310/api/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      start_period: 20s
+      retries: 3

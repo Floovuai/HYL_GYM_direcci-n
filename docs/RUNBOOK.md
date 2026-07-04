@@ -47,6 +47,50 @@ npm run build
 npm start
 ```
 
+## Docker
+
+Construir y levantar:
+
+```bash
+docker compose up -d --build
+```
+
+Abrir:
+
+```text
+http://localhost:4310
+```
+
+Si el puerto del host ya esta ocupado:
+
+```bash
+APP_PORT=4314 docker compose up -d --build
+```
+
+Ver estado:
+
+```bash
+docker compose ps
+docker compose logs -f hyl-gym
+```
+
+Apagar:
+
+```bash
+docker compose down
+```
+
+La imagen ejecuta `npm run start:container`, sirve el cliente construido desde `dist/client` y mantiene persistencia con:
+
+```text
+./data:/app/data
+./uploads:/app/uploads
+```
+
+El contenedor expone `/api/health` como healthcheck interno.
+
+`docker compose config` es util para diagnostico local, pero expande el contenido de `.env`. No compartir esa salida cuando haya claves EVO o Groq configuradas.
+
 ## Actualizar ventas
 
 - Boton de carga Excel en la barra superior.
@@ -122,3 +166,14 @@ Healthcheck:
 ```text
 http://localhost:4310/api/ai/health
 ```
+
+## Mejora de velocidad, tiempo real e IA
+
+La version actual usa SQLite con `sql.js`, que carga la base en memoria y exporta el archivo completo al guardar. Para datos actuales funciona, pero si crece el historico o se sincroniza EVO en tiempo real conviene:
+
+- Cambiar a SQLite nativo (`better-sqlite3`) o Postgres para consultas e indices reales.
+- Crear tablas materializadas o cache de KPI por mes/sede/asesor.
+- Agregar indices por `client_external_id`, `plan_id`, `sold_at`, `source_type` y `source_key`.
+- Separar sincronizacion EVO en un worker con cola, checkpoint por fecha/id y reintentos.
+- Emitir actualizaciones al navegador con Server-Sent Events o WebSocket cuando entren ventas nuevas.
+- Mantener un registro de eventos comerciales para que la IA consulte contexto historico, calidad de datos, iniciativas, tareas y resultados sin recalcular todo.
