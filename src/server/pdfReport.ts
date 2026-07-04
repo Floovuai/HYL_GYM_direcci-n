@@ -11,27 +11,37 @@ export type PdfReportOptions = {
   groqInsights?: string;
 };
 
-const palette = {
-  ink: "#202421",
-  muted: "#66706a",
-  line: "#d9ded8",
-  soft: "#f4f6f3",
-  green: "#18715c",
-  blue: "#3467a7",
-  amber: "#c47b22",
-  red: "#c84d36",
-  brown: "#8a5a44"
+const PAGE = {
+  width: 792,
+  height: 612,
+  margin: 32
 };
 
-const chartColors = [palette.green, palette.blue, palette.amber, palette.red, palette.brown];
+const palette = {
+  ink: "#111827",
+  muted: "#4b5563",
+  header: "#111827",
+  line: "#cfd6df",
+  stripe: "#f7f9fb",
+  teal: "#147d72",
+  blue: "#2563eb",
+  red: "#dc2626",
+  green: "#16a34a",
+  amber: "#d97706",
+  purple: "#7c3aed",
+  pink: "#db2777",
+  brown: "#8b5e4a"
+};
+
+const seriesColors = [palette.blue, palette.amber, palette.green, palette.red, palette.purple, palette.brown, palette.pink, palette.teal];
 
 export async function createManagerPdf(report: AnyRow, options: PdfReportOptions) {
   const doc = new PDFDocument({
-    size: "A4",
-    margin: 42,
+    size: [PAGE.width, PAGE.height],
+    margin: PAGE.margin,
     bufferPages: true,
     info: {
-      Title: `Informe gerencial HYL Gym ${options.monthName} ${options.year}`,
+      Title: `Informe sedes y asesores - Enero a ${options.monthName} ${options.year}`,
       Author: "HYL Gym Direccion Comercial"
     }
   });
@@ -43,460 +53,560 @@ export async function createManagerPdf(report: AnyRow, options: PdfReportOptions
   });
 
   const has = (section: string) => options.sections.has(section);
+  const months = monthRows(report, options.month);
 
-  drawCover(doc, report, options);
-  if (has("summary")) drawSummary(doc, report, options);
-  if (has("charts")) drawCharts(doc, report, options);
-  if (has("daily")) drawDailySection(doc, report);
-  if (has("monthly")) drawMonthlySection(doc, report);
-  if (has("annual")) drawAnnualSection(doc, report);
-  if (has("branches")) drawBranchSection(doc, report);
-  if (has("advisors")) drawAdvisorSection(doc, report);
-  if (has("plans")) drawPlanSection(doc, report);
-  if (has("scores")) drawScoreSection(doc, report);
-  if (has("quality")) drawQualitySection(doc, report);
-  if (has("recommendations")) drawRecommendations(doc, report, "Acciones sugeridas por la plataforma");
-  if (options.includeGroq) drawGroqSection(doc, options.groqInsights);
+  if (has("summary")) drawSummaryPage(doc, report, options, months);
+  if (has("branches") || has("charts")) drawBranchesPage(doc, report, options, months);
+  if (has("advisors") || has("charts")) drawAdvisorsPages(doc, report, options);
+  if (has("daily")) drawDailyPage(doc, report, options);
+  if (has("plans")) drawPlanTablePages(doc, report, options);
+  if (has("plans") || has("charts")) drawPlanChartsPage(doc, report, options);
+  if (has("monthly")) drawMonthlyDetailPage(doc, report, options, months);
+  if (has("annual") || has("scores")) drawScorePage(doc, report, options);
+  if (has("quality") || has("recommendations")) drawQualityAndActionsPage(doc, report, options);
+  if (options.includeGroq) drawGroqPage(doc, options);
 
   drawFooters(doc);
   doc.end();
   return done;
 }
 
-function drawCover(doc: PDFKit.PDFDocument, report: AnyRow, options: PdfReportOptions) {
-  doc.rect(0, 0, doc.page.width, doc.page.height).fill("#ffffff");
-  doc.fillColor(palette.green).rect(0, 0, doc.page.width, 112).fill();
-  doc.fillColor("#ffffff").font("Helvetica-Bold").fontSize(26).text("HYL Gym", 42, 36);
-  doc.font("Helvetica").fontSize(13).text("Informe gerencial comercial", 42, 72);
-
-  doc.fillColor(palette.ink).font("Helvetica-Bold").fontSize(24).text(`${options.monthName} ${options.year}`, 42, 150);
-  doc.font("Helvetica").fontSize(10).fillColor(palette.muted).text(`Generado: ${new Date().toLocaleString("es-CO")}`, 42, 181);
-
-  const kpis = [
-    ["Ventas mes", money(report.state.kpis.totalSales)],
-    ["Ventas ano", money(report.annual.totalSales)],
-    ["Progreso meta", percent(report.state.kpis.targetProgress)],
-    ["Score sedes", String(Math.round(report.state.kpis.averageBranchScore || 0))]
-  ];
-  drawKpiGrid(doc, kpis, 42, 230);
-  doc.y = 310;
-
-  doc.moveDown(2);
-  sectionTitle(doc, "Lectura ejecutiva");
+function drawSummaryPage(doc: PDFKit.PDFDocument, report: AnyRow, options: PdfReportOptions, months: AnyRow[]) {
+  const total = sum(months, "sales");
+  const rows = sum(months, "rows");
+  const avgMonthly = months.length ? total / months.length : 0;
+  const best = months.slice().sort((a, b) => Number(b.sales || 0) - Number(a.sales || 0))[0];
+  pageTitle(doc, `Informe sedes y asesores - Enero a ${options.monthName} ${options.year}`, 36);
+  doc.font("Helvetica-Bold").fontSize(13).fillColor(palette.ink).text(
+    `Dinero ingresado: ${money(total)} | Promedio mensual: ${money(avgMonthly)} | Mejor mes: ${best?.label ?? options.monthName} (${money(best?.sales ?? 0)})`,
+    PAGE.margin,
+    86,
+    { width: contentWidth(doc) }
+  );
   paragraph(
     doc,
-    `Este documento consolida el rendimiento diario, mensual y anual por sedes, asesores y planes. Incluye scores comerciales, comisiones, calidad de datos y acciones sugeridas para direccionar el cierre comercial con datos reales de la plataforma.`
+    `Incluye ventas positivas disponibles de enero a ${options.monthName.toLowerCase()} ${options.year}. La informacion se actualiza con los datos cargados en la plataforma; los registros en cero no se consideran en los totales gerenciales.`,
+    PAGE.margin,
+    118,
+    8.5
   );
-}
 
-function drawSummary(doc: PDFKit.PDFDocument, report: AnyRow, options: PdfReportOptions) {
-  newPage(doc);
-  sectionTitle(doc, "Resumen ejecutivo");
-  drawKpiGrid(
-    doc,
-    [
-      ["Ventas del mes", money(report.state.kpis.totalSales)],
-      ["Registros", int(report.state.kpis.salesRows)],
-      ["Ticket promedio", money(report.state.kpis.avgTicket)],
-      ["Meta mensual", money(report.state.kpis.totalTarget)],
-      ["Ventas anuales", money(report.annual.totalSales)],
-      ["Score asesores", int(Math.round(report.state.kpis.averageAdvisorScore || 0))],
-      ["Score sedes", int(Math.round(report.state.kpis.averageBranchScore || 0))],
-      ["Duplicados", int(report.state.quality.duplicateGroups.length + report.state.quality.naturalDuplicateGroups.length)]
-    ],
-    doc.x,
-    doc.y + 8
-  );
-  doc.y += 116;
-  sectionSubtitle(doc, "Hallazgos clave");
-  bullet(doc, `El mes filtrado es ${options.monthName} ${options.year}, con ${int(report.state.kpis.salesRows)} ventas y ${money(report.state.kpis.totalSales)} en ingresos.`);
-  bullet(doc, `El acumulado anual disponible suma ${money(report.annual.totalSales)} y ${int(report.annual.salesRows)} registros.`);
-  bullet(doc, `La calidad de datos esta en estado ${report.state.quality.status}, con ${int(report.state.quality.orphanSales.missingAdvisor)} ventas sin asesor asignado.`);
-  bullet(doc, `El avance contra Meta 1 mensual es ${percent(report.state.kpis.targetProgress)}.`);
-}
-
-function drawCharts(doc: PDFKit.PDFDocument, report: AnyRow, _options: PdfReportOptions) {
-  newPage(doc);
-  sectionTitle(doc, "Graficos gerenciales");
-  drawBarChart(doc, "Ventas mensuales por sede", report.state.branches.slice(0, 8), "name", "sales", money);
-  drawBarChart(doc, "Top asesores del mes", report.state.advisors.slice(0, 10), "name", "sales", money);
-  drawLineChart(doc, "Tendencia mensual del ano", report.monthlyTrend, "label", "sales", money);
-  drawBarChart(doc, "Planes con mayor venta mensual", report.state.plans.slice(0, 10), "name", "sales", money);
-}
-
-function drawDailySection(doc: PDFKit.PDFDocument, report: AnyRow) {
-  newPage(doc);
-  sectionTitle(doc, "Informe diario");
-  drawLineChart(doc, "Ventas por dia del mes", report.dailyTrend, "label", "sales", money);
-  drawTable(doc, "Detalle diario", ["Dia", "Ventas", "Registros"], report.dailyTrend.map((row: AnyRow) => [
+  const tableRows = months.map((row) => [
     row.label,
     money(row.sales),
+    percent(total ? row.sales / total : 0),
+    money(row.sales / Math.max(daysInMonth(options.year, row.month), 1)),
     int(row.rows)
-  ]));
-  drawTable(doc, "Dias de mayor facturacion", ["Dia", "Ventas", "Registros"], report.topDays.map((row: AnyRow) => [
-    row.label,
-    money(row.sales),
-    int(row.rows)
-  ]));
+  ]);
+  drawTable(doc, ["Mes", "Dinero ingresado", "% periodo", "Promedio diario", "Transacciones"], tableRows, 188, 150, 410, [0.2, 0.27, 0.15, 0.21, 0.17]);
+
+  drawLineChart(doc, {
+    title: `Rendimiento acumulado - dinero ingresado por mes`,
+    x: 74,
+    y: 328,
+    width: 650,
+    height: 184,
+    series: [{ name: "Total", color: palette.blue, points: months.map((row) => ({ label: row.label, value: row.sales })) }],
+    yFormatter: compactMoney
+  });
 }
 
-function drawMonthlySection(doc: PDFKit.PDFDocument, report: AnyRow) {
+function drawBranchesPage(doc: PDFKit.PDFDocument, report: AnyRow, options: PdfReportOptions, months: AnyRow[]) {
   newPage(doc);
-  sectionTitle(doc, "Informe mensual del ano");
-  drawLineChart(doc, "Ventas mes a mes", report.monthlyTrend, "label", "sales", money);
-  drawTable(doc, "Tendencia mensual", ["Mes", "Ventas", "Meta", "Avance", "Ticket"], report.monthlyTrend.map((row: AnyRow) => [
-    row.label,
-    money(row.sales),
-    money(row.target),
-    percent(row.progress),
-    money(row.avgTicket)
-  ]));
-}
-
-function drawAnnualSection(doc: PDFKit.PDFDocument, report: AnyRow) {
-  newPage(doc);
-  sectionTitle(doc, "Informe anual");
-  drawKpiGrid(
+  pageTitle(doc, "Sedes", 38);
+  const branches = report.annualByBranch.filter((row: AnyRow) => row.sales > 0).slice(0, 8);
+  const total = sum(branches, "sales");
+  drawTable(
     doc,
-    [
-      ["Ventas ano", money(report.annual.totalSales)],
-      ["Registros ano", int(report.annual.salesRows)],
-      ["Sedes activas", int(report.annual.activeBranches)],
-      ["Asesores activos", int(report.annual.activeAdvisors)]
-    ],
-    doc.x,
-    doc.y + 8
+    ["Sede", "Dinero ingresado", "% periodo", "Transacciones", "Ticket promedio"],
+    branches.map((row: AnyRow) => [branchLabel(row.name), money(row.sales), percent(total ? row.sales / total : 0), int(row.rows), money(row.sales / Math.max(row.rows, 1))]),
+    190,
+    86,
+    404,
+    [0.23, 0.24, 0.16, 0.18, 0.19]
   );
-  doc.y += 112;
-  drawBarChart(doc, "Acumulado anual por sede", report.annualByBranch.slice(0, 8), "name", "sales", money);
-  drawBarChart(doc, "Acumulado anual por plan", report.annualByPlan.slice(0, 10), "name", "sales", money);
+
+  drawHorizontalBarChart(doc, {
+    title: "Ventas acumuladas por sede",
+    x: 74,
+    y: 258,
+    width: 320,
+    height: 215,
+    data: branches.map((row: AnyRow) => ({ label: branchLabel(row.name), value: row.sales })),
+    color: palette.teal,
+    valueFormatter: compactMoney
+  });
+
+  drawMultiLineChart(doc, {
+    title: "Rendimiento por sede",
+    x: 438,
+    y: 254,
+    width: 286,
+    height: 220,
+    labels: months.map((row) => row.label),
+    series: branches.slice(0, 7).map((branch: AnyRow, index: number) => ({
+      name: branchLabel(branch.name),
+      color: seriesColors[index % seriesColors.length],
+      values: months.map((month) => Number(report.branchMonthly?.[branch.id]?.[month.month] || 0))
+    })),
+    yFormatter: compactMoney
+  });
 }
 
-function drawBranchSection(doc: PDFKit.PDFDocument, report: AnyRow) {
+function drawAdvisorsPages(doc: PDFKit.PDFDocument, report: AnyRow, _options: PdfReportOptions) {
   newPage(doc);
-  sectionTitle(doc, "Rendimiento por sedes");
-  drawTable(doc, "Sedes - mes y ano", ["Sede", "Mes", "Ano", "Meta ano", "Avance", "Score"], report.annualByBranch.map((row: AnyRow) => [
-    row.name,
-    money(row.monthlySales),
-    money(row.sales),
-    money(row.annualTarget),
-    percent(row.annualProgress),
-    scoreLabel(row.score)
-  ]));
+  const advisors = report.annualByAdvisor.filter((row: AnyRow) => row.sales > 0);
+  const top = advisors.slice(0, 18);
+  pageTitle(doc, "Asesores", 36);
+  doc.font("Helvetica-Bold").fontSize(13).fillColor(palette.ink).text(
+    `Asesores con ventas positivas: ${int(advisors.length)} | Venta sin asesor asignado: ${money(report.unassignedSales || 0)} | Venta SUPORTEEVO positiva: ${money(report.supportEvoSales || 0)}`,
+    PAGE.margin,
+    82,
+    { width: contentWidth(doc) }
+  );
+  drawHorizontalBarChart(doc, {
+    title: "Top asesores por venta acumulada",
+    x: 286,
+    y: 128,
+    width: 450,
+    height: 250,
+    data: top.map((row: AnyRow) => ({ label: advisorChartName(row.name), value: row.sales })),
+    color: palette.teal,
+    valueFormatter: compactMoney
+  });
+  drawAdvisorTable(doc, advisors.slice(0, 5), 124, 412);
+
+  for (let start = 5; start < advisors.length; start += 19) {
+    newPage(doc);
+    drawAdvisorTable(doc, advisors.slice(start, start + 19), 110, 56, start + 1);
+  }
 }
 
-function drawAdvisorSection(doc: PDFKit.PDFDocument, report: AnyRow) {
+function drawDailyPage(doc: PDFKit.PDFDocument, report: AnyRow, options: PdfReportOptions) {
   newPage(doc);
-  sectionTitle(doc, "Rendimiento por asesores");
-  drawTable(doc, "Asesores - mes y ano", ["Asesor", "Sede", "Mes", "Ano", "Score", "Comision"], report.annualByAdvisor.slice(0, 24).map((row: AnyRow) => [
-    row.name,
-    row.branchName,
-    money(row.monthlySales),
-    money(row.sales),
-    scoreLabel(row.score),
-    row.commission ? money(row.commission.finalCommission) : "-"
-  ]));
+  pageTitle(doc, "Rendimiento Diario Mensual", 36);
+  const daily = report.dailyTrend || [];
+  drawLineChart(doc, {
+    title: `Rendimiento diario - ${options.monthName}`,
+    x: 78,
+    y: 118,
+    width: 300,
+    height: 210,
+    series: [{ name: options.monthName, color: palette.blue, points: daily.map((row: AnyRow) => ({ label: String(row.day ?? row.label), value: row.sales })) }],
+    yFormatter: compactMoney
+  });
+  drawHorizontalBarChart(doc, {
+    title: "Dias de mayor facturacion",
+    x: 430,
+    y: 118,
+    width: 290,
+    height: 210,
+    data: (report.topDays || []).map((row: AnyRow) => ({ label: row.label, value: row.sales })),
+    color: palette.teal,
+    valueFormatter: compactMoney
+  });
+  drawTable(
+    doc,
+    ["Dia", "Dinero ingresado", "Transacciones", "Ticket prom."],
+    daily.map((row: AnyRow) => [row.label, money(row.sales), int(row.rows), money(row.sales / Math.max(row.rows, 1))]),
+    182,
+    374,
+    430,
+    [0.16, 0.34, 0.22, 0.28],
+    10
+  );
 }
 
-function drawPlanSection(doc: PDFKit.PDFDocument, report: AnyRow) {
+function drawPlanTablePages(doc: PDFKit.PDFDocument, report: AnyRow, _options: PdfReportOptions) {
   newPage(doc);
-  sectionTitle(doc, "Rendimiento por planes");
-  drawTable(doc, "Planes - mes y ano", ["Plan", "Categoria", "Mes", "Ano", "Registros", "Score"], report.annualByPlan.slice(0, 24).map((row: AnyRow) => [
-    row.name,
-    row.category || "-",
-    money(row.monthlySales),
-    money(row.sales),
-    int(row.rows),
-    scoreLabel(row.score)
-  ]));
+  const plans = report.annualByPlan.filter((row: AnyRow) => row.sales > 0);
+  const total = sum(plans, "sales");
+  pageTitle(doc, "Rendimiento del Periodo de Planes", 36);
+  doc.font("Helvetica-Bold").fontSize(13).fillColor(palette.ink).text(
+    `Ingreso por planes: ${money(total)} | Planes con ventas: ${int(plans.length)} | Transacciones de planes: ${int(sum(plans, "rows"))}`,
+    PAGE.margin,
+    82,
+    { width: contentWidth(doc) }
+  );
+  drawPlansTable(doc, plans.slice(0, 25), total, 122);
+
+  for (let start = 25; start < plans.length; start += 27) {
+    newPage(doc);
+    drawPlansTable(doc, plans.slice(start, start + 27), total, 52);
+  }
 }
 
-function drawScoreSection(doc: PDFKit.PDFDocument, report: AnyRow) {
+function drawPlanChartsPage(doc: PDFKit.PDFDocument, report: AnyRow, _options: PdfReportOptions) {
   newPage(doc);
-  sectionTitle(doc, "Scores comerciales");
-  drawTable(doc, "Score por sede", ["Sede", "Ventas mes", "Score", "Estado"], report.state.branches.map((row: AnyRow) => [
-    row.name,
-    money(row.sales),
-    nullableScore(row.score),
-    row.score.status
-  ]));
-  drawTable(doc, "Score por asesor", ["Asesor", "Sede", "Ventas mes", "Score", "Estado"], report.state.advisors.slice(0, 24).map((row: AnyRow) => [
-    row.name,
-    row.branchName,
-    money(row.sales),
-    nullableScore(row.score),
-    row.score.status
-  ]));
-  drawTable(doc, "Score por plan", ["Plan", "Ventas mes", "Registros", "Score", "Estado"], report.state.plans.slice(0, 18).map((row: AnyRow) => [
-    row.name,
-    money(row.sales),
-    int(row.rows),
-    nullableScore(row.score),
-    row.score.status
-  ]));
+  const plans = report.annualByPlan.filter((row: AnyRow) => row.sales > 0);
+  pageTitle(doc, "Graficos de Planes", 36);
+  drawHorizontalBarChart(doc, {
+    title: "Top planes por dinero ingresado",
+    x: 92,
+    y: 104,
+    width: 300,
+    height: 252,
+    data: plans.slice(0, 16).map((row: AnyRow) => ({ label: row.name, value: row.sales })),
+    color: palette.teal,
+    valueFormatter: compactMoney
+  });
+  drawHorizontalBarChart(doc, {
+    title: "Top planes por transacciones",
+    x: 468,
+    y: 104,
+    width: 280,
+    height: 252,
+    data: plans.slice().sort((a: AnyRow, b: AnyRow) => Number(b.rows || 0) - Number(a.rows || 0)).slice(0, 16).map((row: AnyRow) => ({ label: row.name, value: row.rows })),
+    color: palette.blue,
+    valueFormatter: int
+  });
 }
 
-function drawQualitySection(doc: PDFKit.PDFDocument, report: AnyRow) {
+function drawMonthlyDetailPage(doc: PDFKit.PDFDocument, report: AnyRow, options: PdfReportOptions, months: AnyRow[]) {
   newPage(doc);
-  sectionTitle(doc, "Calidad de datos");
+  pageTitle(doc, "Detalle Mensual", 36);
+  drawTable(
+    doc,
+    ["Mes", "Ventas", "Meta", "Avance", "Ticket", "Transacciones"],
+    months.map((row) => [row.label, money(row.sales), money(row.target), percent(row.progress), money(row.avgTicket), int(row.rows)]),
+    120,
+    96,
+    552,
+    [0.16, 0.2, 0.2, 0.14, 0.16, 0.14]
+  );
+  drawLineChart(doc, {
+    title: `Ventas vs meta - Enero a ${options.monthName}`,
+    x: 92,
+    y: 260,
+    width: 610,
+    height: 230,
+    series: [
+      { name: "Ventas", color: palette.blue, points: months.map((row) => ({ label: row.label, value: row.sales })) },
+      { name: "Meta", color: palette.red, points: months.map((row) => ({ label: row.label, value: row.target })) }
+    ],
+    yFormatter: compactMoney
+  });
+}
+
+function drawScorePage(doc: PDFKit.PDFDocument, report: AnyRow, _options: PdfReportOptions) {
+  newPage(doc);
+  pageTitle(doc, "Scores Comerciales", 36);
+  drawTable(
+    doc,
+    ["Sede", "Venta mes", "Venta periodo", "Avance anual", "Score"],
+    report.annualByBranch.slice(0, 12).map((row: AnyRow) => [branchLabel(row.name), money(row.monthlySales), money(row.sales), percent(row.annualProgress), scoreLabel(row.score)]),
+    80,
+    90,
+    632,
+    [0.22, 0.2, 0.2, 0.17, 0.21]
+  );
+  drawTable(
+    doc,
+    ["Asesor", "Sede", "Venta mes", "Venta periodo", "Score"],
+    report.annualByAdvisor.filter((row: AnyRow) => row.sales > 0).slice(0, 12).map((row: AnyRow) => [titleCase(row.name), branchLabel(row.branchName), money(row.monthlySales), money(row.sales), scoreLabel(row.score)]),
+    66,
+    322,
+    660,
+    [0.28, 0.18, 0.18, 0.18, 0.18],
+    12
+  );
+}
+
+function drawQualityAndActionsPage(doc: PDFKit.PDFDocument, report: AnyRow, _options: PdfReportOptions) {
+  newPage(doc);
+  pageTitle(doc, "Calidad de Datos y Acciones", 36);
   const quality = report.state.quality;
-  drawKpiGrid(
+  drawTable(
     doc,
+    ["Indicador", "Valor", "Lectura"],
     [
-      ["Estado", quality.status],
-      ["Ventas", int(quality.totalRows)],
-      ["Llaves unicas", int(quality.uniqueSaleKeys)],
-      ["Duplicados", int(quality.duplicateGroups.length + quality.naturalDuplicateGroups.length)],
-      ["Sin asesor", int(quality.orphanSales.missingAdvisor)],
-      ["Sin sede", int(quality.orphanSales.missingBranch)],
-      ["Sin plan", int(quality.orphanSales.missingPlan)],
-      ["Valor cero", int(quality.orphanSales.zeroValue)]
+      ["Estado calidad", quality.status, quality.status === "OK" ? "Listo para gerencia" : "Requiere revision"],
+      ["Ventas", int(quality.totalRows), "Registros cargados"],
+      ["Duplicados", int(quality.duplicateGroups.length + quality.naturalDuplicateGroups.length), "Posibles ventas repetidas"],
+      ["Sin asesor", int(quality.orphanSales.missingAdvisor), "Asignacion comercial pendiente"],
+      ["Sin sede", int(quality.orphanSales.missingBranch), "Asignacion operativa pendiente"],
+      ["Valor cero", int(quality.orphanSales.zeroValue), "No entra a ingreso gerencial"]
     ],
-    doc.x,
-    doc.y + 8
+    92,
+    92,
+    610,
+    [0.32, 0.18, 0.5]
   );
-  doc.y += 118;
-  paragraph(doc, "Este bloque permite validar si la exportacion se puede usar en junta sin limpieza previa. Las ventas sin asesor asignado deben revisarse para completar accountability comercial.");
+  doc.font("Helvetica-Bold").fontSize(14).fillColor(palette.ink).text("Acciones sugeridas por la plataforma", 92, 288);
+  let y = 320;
+  for (const item of report.state.recommendations.slice(0, 6)) {
+    doc.font("Helvetica-Bold").fontSize(9).fillColor(palette.ink).text(`${item.priority} - ${item.title}`, 104, y, { width: 580 });
+    y += 15;
+    doc.font("Helvetica").fontSize(8).fillColor(palette.muted).text(`${item.metric}. ${item.detail}`, 104, y, { width: 580, lineGap: 1 });
+    y += 34;
+  }
 }
 
-function drawRecommendations(doc: PDFKit.PDFDocument, report: AnyRow, title: string) {
+function drawGroqPage(doc: PDFKit.PDFDocument, options: PdfReportOptions) {
   newPage(doc);
-  sectionTitle(doc, title);
-  for (const item of report.state.recommendations.slice(0, 10)) {
-    ensureSpace(doc, 56);
-    doc.font("Helvetica-Bold").fontSize(10).fillColor(palette.ink).text(`${item.priority} - ${item.title}`);
-    doc.font("Helvetica").fontSize(9).fillColor(palette.muted).text(item.metric);
-    paragraph(doc, item.detail, 9);
-    doc.moveDown(0.4);
-  }
+  pageTitle(doc, "Sugerencias de Accion Guiadas por IA", 36);
+  const text = options.groqInsights?.trim() || "Groq no devolvio sugerencias para esta exportacion. Verifica que la clave este configurada y vuelve a generar el PDF con la opcion de IA activa.";
+  paragraph(doc, cleanMarkdown(text), 80, 92, 10, 640);
 }
 
-function drawGroqSection(doc: PDFKit.PDFDocument, groqInsights?: string) {
-  newPage(doc);
-  sectionTitle(doc, "Sugerencias de accion guiadas por Groq");
-  if (!groqInsights) {
-    paragraph(doc, "Groq no devolvio sugerencias para esta exportacion. Verifica que la clave este configurada y vuelve a generar el PDF con la opcion de IA activa.");
-    return;
-  }
-  for (const block of cleanMarkdown(groqInsights).split(/\n{2,}/)) {
-    paragraph(doc, block.trim());
-  }
+function drawAdvisorTable(doc: PDFKit.PDFDocument, rows: AnyRow[], x: number, y: number, startIndex = 1) {
+  drawTable(
+    doc,
+    ["#", "Asesor", "Sede", "Dinero ingresado", "Transacciones", "Ticket prom."],
+    rows.map((row, index) => [
+      String(startIndex + index),
+      titleCase(row.name).toUpperCase(),
+      branchLabel(row.branchName),
+      money(row.sales),
+      int(row.rows),
+      money(row.sales / Math.max(row.rows, 1))
+    ]),
+    x,
+    y,
+    536,
+    [0.05, 0.36, 0.16, 0.18, 0.13, 0.12],
+    19
+  );
 }
 
-function sectionTitle(doc: PDFKit.PDFDocument, title: string) {
-  doc.x = doc.page.margins.left;
-  ensureSpace(doc, 48);
-  doc.font("Helvetica-Bold").fontSize(17).fillColor(palette.ink).text(title);
-  doc.moveTo(doc.x, doc.y + 6).lineTo(doc.page.width - doc.page.margins.right, doc.y + 6).strokeColor(palette.line).stroke();
-  doc.moveDown(1);
+function drawPlansTable(doc: PDFKit.PDFDocument, rows: AnyRow[], total: number, y: number) {
+  drawTable(
+    doc,
+    ["Plan", "Dinero ingresado", "% planes", "Transacciones", "Ticket prom.", "Sedes"],
+    rows.map((row: AnyRow) => [
+      row.name,
+      money(row.sales),
+      percent(total ? row.sales / total : 0),
+      int(row.rows),
+      money(row.sales / Math.max(row.rows, 1)),
+      int(row.branchCount || row.branches || 0)
+    ]),
+    122,
+    y,
+    562,
+    [0.4, 0.17, 0.1, 0.13, 0.14, 0.06],
+    27
+  );
 }
 
-function sectionSubtitle(doc: PDFKit.PDFDocument, title: string) {
-  doc.x = doc.page.margins.left;
-  ensureSpace(doc, 26);
-  doc.font("Helvetica-Bold").fontSize(12).fillColor(palette.ink).text(title);
-  doc.moveDown(0.5);
-}
-
-function paragraph(doc: PDFKit.PDFDocument, text: string, size = 10) {
-  if (!text) return;
-  doc.x = doc.page.margins.left;
-  ensureSpace(doc, 36);
-  doc.font("Helvetica").fontSize(size).fillColor(palette.ink).text(text, {
+function pageTitle(doc: PDFKit.PDFDocument, title: string, y: number) {
+  doc.font("Helvetica-Bold").fontSize(18).fillColor(palette.ink).text(title, PAGE.margin, y, {
     width: contentWidth(doc),
-    lineGap: 2
+    align: "center"
   });
-  doc.moveDown(0.5);
 }
 
-function bullet(doc: PDFKit.PDFDocument, text: string) {
-  doc.x = doc.page.margins.left;
-  ensureSpace(doc, 28);
-  const left = doc.x;
-  doc.fillColor(palette.green).circle(left + 4, doc.y + 6, 2.2).fill();
-  doc.fillColor(palette.ink).font("Helvetica").fontSize(10).text(text, left + 14, doc.y, {
-    width: contentWidth(doc) - 14,
-    lineGap: 2
+function paragraph(doc: PDFKit.PDFDocument, text: string, x: number, y: number, size = 8.5, width = contentWidth(doc)) {
+  doc.font("Helvetica").fontSize(size).fillColor("#111111").text(text, x, y, {
+    width,
+    lineGap: 1.5
   });
-  doc.x = left;
-  doc.moveDown(0.5);
 }
 
-function drawKpiGrid(doc: PDFKit.PDFDocument, items: string[][], x: number, y: number) {
-  const gap = 10;
-  const cols = 4;
-  const width = (contentWidth(doc) - gap * (cols - 1)) / cols;
-  const height = 48;
-  items.forEach((item, index) => {
-    const col = index % cols;
-    const row = Math.floor(index / cols);
-    const px = x + col * (width + gap);
-    const py = y + row * (height + gap);
-    doc.roundedRect(px, py, width, height, 6).fillAndStroke("#ffffff", palette.line);
-    doc.font("Helvetica").fontSize(8).fillColor(palette.muted).text(item[0], px + 9, py + 9, { width: width - 18 });
-    doc.font("Helvetica-Bold").fontSize(12).fillColor(palette.ink).text(item[1], px + 9, py + 25, { width: width - 18 });
-  });
-  doc.x = doc.page.margins.left;
-}
-
-function drawBarChart(
+function drawTable(
   doc: PDFKit.PDFDocument,
-  title: string,
-  data: AnyRow[],
-  labelKey: string,
-  valueKey: string,
-  formatter: (value: number) => string
+  headers: string[],
+  rows: string[][],
+  x: number,
+  y: number,
+  width: number,
+  proportions: number[],
+  maxRows = 999
 ) {
-  if (!data.length) return;
-  doc.x = doc.page.margins.left;
-  ensureSpace(doc, 210);
-  sectionSubtitle(doc, title);
-  const x = doc.x;
-  const y = doc.y;
-  const width = contentWidth(doc);
-  const height = 150;
-  const max = Math.max(...data.map((item) => Number(item[valueKey] || 0)), 1);
-  const barHeight = Math.min(16, (height - 8) / data.length - 4);
-  data.forEach((item, index) => {
-    const rowY = y + index * (barHeight + 6);
-    const label = String(item[labelKey] ?? "").slice(0, 28);
-    const value = Number(item[valueKey] || 0);
-    const barWidth = Math.max(1, (width - 190) * (value / max));
-    doc.font("Helvetica").fontSize(7.5).fillColor(palette.muted).text(label, x, rowY, { width: 112, height: barHeight + 3 });
-    doc.rect(x + 118, rowY, width - 190, barHeight).fill("#edf2ef");
-    doc.rect(x + 118, rowY, barWidth, barHeight).fill(chartColors[index % chartColors.length]);
-    doc.font("Helvetica-Bold").fontSize(7.5).fillColor(palette.ink).text(formatter(value), x + width - 66, rowY - 1, { width: 66, align: "right" });
+  const heights = { header: 18, row: 18 };
+  const colWidths = proportions.map((value) => width * value);
+  drawTableRow(doc, headers, x, y, colWidths, heights.header, true);
+  rows.slice(0, maxRows).forEach((row, index) => {
+    drawTableRow(doc, row, x, y + heights.header + index * heights.row, colWidths, heights.row, false, index % 2 === 1);
   });
-  doc.y = y + height + 16;
-  doc.x = doc.page.margins.left;
+}
+
+function drawTableRow(doc: PDFKit.PDFDocument, cells: string[], x: number, y: number, colWidths: number[], height: number, header: boolean, stripe = false) {
+  let px = x;
+  const fill = header ? palette.header : stripe ? palette.stripe : "#ffffff";
+  doc.rect(x, y, sum(colWidths), height).fill(fill);
+  cells.forEach((cell, index) => {
+    const colWidth = colWidths[index] || 60;
+    doc.rect(px, y, colWidth, height).strokeColor(palette.line).lineWidth(0.5).stroke();
+    const align = index === 0 || (header && index <= 1) ? "left" : index >= 2 ? "right" : "left";
+    doc.font(header ? "Helvetica-Bold" : "Helvetica").fontSize(header ? 7.2 : 6.8).fillColor(header ? "#ffffff" : "#111111").text(String(cell ?? "-"), px + 5, y + 5, {
+      width: colWidth - 10,
+      height: height - 5,
+      align
+    });
+    px += colWidth;
+  });
+}
+
+function drawHorizontalBarChart(
+  doc: PDFKit.PDFDocument,
+  config: { title: string; x: number; y: number; width: number; height: number; data: Array<{ label: string; value: number }>; color: string; valueFormatter: (value: number) => string }
+) {
+  const data = config.data.filter((item) => Number(item.value || 0) > 0);
+  if (!data.length) return;
+  doc.font("Helvetica-Bold").fontSize(10).fillColor("#111111").text(config.title, config.x, config.y - 16, {
+    width: config.width,
+    align: "center"
+  });
+  const labelWidth = Math.min(150, config.width * 0.38);
+  const chartX = config.x + labelWidth;
+  const chartWidth = config.width - labelWidth - 8;
+  const rowGap = 4;
+  const rowHeight = Math.max(7, Math.min(14, (config.height - rowGap * (data.length - 1)) / data.length));
+  const max = Math.max(...data.map((item) => Number(item.value || 0)), 1);
+  doc.rect(chartX, config.y, chartWidth, config.height).strokeColor("#222222").lineWidth(0.7).stroke();
+  for (let i = 0; i <= 4; i += 1) {
+    const gx = chartX + (chartWidth / 4) * i;
+    doc.moveTo(gx, config.y).lineTo(gx, config.y + config.height).strokeColor("#e5e7eb").lineWidth(0.4).stroke();
+  }
+  data.forEach((item, index) => {
+    const rowY = config.y + index * (rowHeight + rowGap) + 4;
+    const label = String(item.label || "").slice(0, 34);
+    const value = Number(item.value || 0);
+    doc.font("Helvetica").fontSize(6.5).fillColor("#111111").text(label, config.x, rowY - 1, {
+      width: labelWidth - 6,
+      align: "right",
+      height: rowHeight + 4
+    });
+    doc.rect(chartX, rowY, Math.max(1, (value / max) * (chartWidth - 8)), rowHeight).fill(config.color);
+  });
+  doc.font("Helvetica").fontSize(6.5).fillColor("#111111").text(config.valueFormatter(max), chartX + chartWidth - 52, config.y + config.height + 5, { width: 52, align: "right" });
 }
 
 function drawLineChart(
   doc: PDFKit.PDFDocument,
-  title: string,
-  data: AnyRow[],
-  labelKey: string,
-  valueKey: string,
-  formatter: (value: number) => string
+  config: { title: string; x: number; y: number; width: number; height: number; series: Array<{ name: string; color: string; points: Array<{ label: string; value: number }> }>; yFormatter: (value: number) => string }
 ) {
-  if (!data.length) return;
-  doc.x = doc.page.margins.left;
-  ensureSpace(doc, 210);
-  sectionSubtitle(doc, title);
-  const x = doc.x;
-  const y = doc.y + 4;
-  const width = contentWidth(doc);
-  const height = 136;
-  const max = Math.max(...data.map((item) => Number(item[valueKey] || 0)), 1);
-  doc.rect(x, y, width, height).fillAndStroke("#ffffff", palette.line);
-  for (let i = 0; i <= 4; i++) {
-    const gy = y + (height / 4) * i;
-    doc.moveTo(x, gy).lineTo(x + width, gy).strokeColor("#eef1ee").stroke();
-  }
-  const points = data.map((item, index) => {
-    const px = x + 22 + (index * (width - 44)) / Math.max(data.length - 1, 1);
-    const py = y + height - 18 - (Number(item[valueKey] || 0) / max) * (height - 34);
-    return { x: px, y: py, label: String(item[labelKey] ?? ""), value: Number(item[valueKey] || 0) };
+  const labels = config.series[0]?.points.map((point) => point.label) || [];
+  const values = config.series.flatMap((serie) => serie.points.map((point) => Number(point.value || 0)));
+  const max = Math.max(...values, 1);
+  doc.font("Helvetica-Bold").fontSize(11).fillColor("#111111").text(config.title, config.x, config.y - 22, {
+    width: config.width,
+    align: "center"
   });
-  doc.strokeColor(palette.green).lineWidth(2);
-  points.forEach((point, index) => {
-    if (index === 0) doc.moveTo(point.x, point.y);
-    else doc.lineTo(point.x, point.y);
-  });
-  doc.stroke();
-  points.forEach((point, index) => {
-    doc.circle(point.x, point.y, 2.6).fill(chartColors[index % chartColors.length]);
-    if (data.length <= 12 || index % 3 === 0) {
-      doc.font("Helvetica").fontSize(6.5).fillColor(palette.muted).text(point.label.slice(0, 5), point.x - 14, y + height + 3, { width: 28, align: "center" });
-    }
-  });
-  doc.font("Helvetica-Bold").fontSize(8).fillColor(palette.ink).text(formatter(max), x + width - 90, y + 6, { width: 82, align: "right" });
-  doc.y = y + height + 24;
-  doc.x = doc.page.margins.left;
-}
-
-function drawTable(doc: PDFKit.PDFDocument, title: string, headers: string[], rows: string[][]) {
-  if (!rows.length) return;
-  doc.x = doc.page.margins.left;
-  ensureSpace(doc, 90);
-  sectionSubtitle(doc, title);
-  const width = contentWidth(doc);
-  const colWidth = width / headers.length;
-  drawTableRow(doc, headers, colWidth, true);
-  for (const row of rows) {
-    ensureSpace(doc, 24);
-    drawTableRow(doc, row, colWidth, false);
-  }
-  doc.moveDown(0.8);
-  doc.x = doc.page.margins.left;
-}
-
-function drawTableRow(doc: PDFKit.PDFDocument, cells: string[], colWidth: number, header: boolean) {
-  const x = doc.x;
-  const y = doc.y;
-  const height = header ? 22 : 25;
-  doc.rect(x, y, colWidth * cells.length, height).fill(header ? palette.green : "#ffffff");
-  cells.forEach((cell, index) => {
-    const px = x + index * colWidth;
-    doc.rect(px, y, colWidth, height).strokeColor(header ? palette.green : palette.line).stroke();
-    doc.font(header ? "Helvetica-Bold" : "Helvetica").fontSize(header ? 8 : 7.4).fillColor(header ? "#ffffff" : palette.ink).text(String(cell ?? "-"), px + 5, y + 6, {
-      width: colWidth - 10,
-      height: height - 7
+  drawChartFrame(doc, config.x, config.y, config.width, config.height);
+  const plot = chartPlot(config.x, config.y, config.width, config.height);
+  config.series.forEach((serie) => {
+    doc.strokeColor(serie.color).lineWidth(1.5);
+    serie.points.forEach((point, index) => {
+      const px = plot.x + (index * plot.width) / Math.max(labels.length - 1, 1);
+      const py = plot.y + plot.height - (Number(point.value || 0) / max) * plot.height;
+      if (index === 0) doc.moveTo(px, py);
+      else doc.lineTo(px, py);
+    });
+    doc.stroke();
+    serie.points.forEach((point, index) => {
+      const px = plot.x + (index * plot.width) / Math.max(labels.length - 1, 1);
+      const py = plot.y + plot.height - (Number(point.value || 0) / max) * plot.height;
+      doc.circle(px, py, 2.4).fill(serie.color);
     });
   });
-  doc.y = y + height;
-  doc.x = doc.page.margins.left;
+  drawXAxisLabels(doc, labels, plot.x, config.y + config.height + 6, plot.width);
+  doc.font("Helvetica").fontSize(7).fillColor("#111111").text(config.yFormatter(max), config.x + 6, config.y + 6, { width: 64 });
+}
+
+function drawMultiLineChart(
+  doc: PDFKit.PDFDocument,
+  config: { title: string; x: number; y: number; width: number; height: number; labels: string[]; series: Array<{ name: string; color: string; values: number[] }>; yFormatter: (value: number) => string }
+) {
+  const values = config.series.flatMap((serie) => serie.values.map((value) => Number(value || 0)));
+  const max = Math.max(...values, 1);
+  doc.font("Helvetica-Bold").fontSize(10).fillColor("#111111").text(config.title, config.x, config.y - 16, {
+    width: config.width,
+    align: "center"
+  });
+  drawChartFrame(doc, config.x, config.y, config.width, config.height);
+  const plot = chartPlot(config.x, config.y, config.width - 42, config.height);
+  config.series.forEach((serie) => {
+    doc.strokeColor(serie.color).lineWidth(1.2);
+    serie.values.forEach((value, index) => {
+      const px = plot.x + (index * plot.width) / Math.max(config.labels.length - 1, 1);
+      const py = plot.y + plot.height - (Number(value || 0) / max) * plot.height;
+      if (index === 0) doc.moveTo(px, py);
+      else doc.lineTo(px, py);
+    });
+    doc.stroke();
+    serie.values.forEach((value, index) => {
+      const px = plot.x + (index * plot.width) / Math.max(config.labels.length - 1, 1);
+      const py = plot.y + plot.height - (Number(value || 0) / max) * plot.height;
+      doc.circle(px, py, 1.8).fill(serie.color);
+    });
+  });
+  drawXAxisLabels(doc, config.labels, plot.x, config.y + config.height + 5, plot.width);
+  doc.font("Helvetica").fontSize(6).fillColor("#111111").text(config.yFormatter(max), config.x + 5, config.y + 6, { width: 52 });
+  let ly = config.y + 12;
+  for (const serie of config.series) {
+    doc.rect(config.x + config.width - 34, ly, 6, 6).fill(serie.color);
+    doc.font("Helvetica").fontSize(5.4).fillColor("#111111").text(serie.name.slice(0, 12), config.x + config.width - 26, ly - 1, { width: 34 });
+    ly += 10;
+  }
+}
+
+function drawChartFrame(doc: PDFKit.PDFDocument, x: number, y: number, width: number, height: number) {
+  doc.rect(x, y, width, height).strokeColor("#222222").lineWidth(0.7).stroke();
+  for (let i = 1; i < 5; i += 1) {
+    const gy = y + (height / 5) * i;
+    doc.moveTo(x, gy).lineTo(x + width, gy).strokeColor("#e5e7eb").lineWidth(0.4).stroke();
+  }
+}
+
+function chartPlot(x: number, y: number, width: number, height: number) {
+  return { x: x + 28, y: y + 18, width: width - 48, height: height - 44 };
+}
+
+function drawXAxisLabels(doc: PDFKit.PDFDocument, labels: string[], x: number, y: number, width: number) {
+  labels.forEach((label, index) => {
+    const px = x + (index * width) / Math.max(labels.length - 1, 1);
+    doc.font("Helvetica").fontSize(6.4).fillColor("#111111").text(String(label).slice(0, 5), px - 16, y, {
+      width: 32,
+      align: "center"
+    });
+  });
 }
 
 function drawFooters(doc: PDFKit.PDFDocument) {
   const range = doc.bufferedPageRange();
-  for (let i = range.start; i < range.start + range.count; i++) {
+  for (let i = range.start; i < range.start + range.count; i += 1) {
     doc.switchToPage(i);
-    doc.font("Helvetica").fontSize(8).fillColor(palette.muted);
-    doc.text(`HYL Gym Direccion Comercial - Pagina ${i + 1} de ${range.count}`, doc.page.margins.left, doc.page.height - 28, {
-      width: contentWidth(doc),
-      align: "center"
+    doc.font("Helvetica").fontSize(7.5).fillColor(palette.muted).text(`Pagina ${i + 1}`, PAGE.width - 78, PAGE.height - 28, {
+      width: 52,
+      align: "right"
     });
   }
 }
 
-function ensureSpace(doc: PDFKit.PDFDocument, height: number) {
-  if (doc.y + height > doc.page.height - doc.page.margins.bottom - 24) {
-    newPage(doc);
-  }
-}
-
 function newPage(doc: PDFKit.PDFDocument) {
-  doc.addPage();
-  doc.y = doc.page.margins.top;
+  doc.addPage({ size: [PAGE.width, PAGE.height], margin: PAGE.margin });
 }
 
-function contentWidth(doc: PDFKit.PDFDocument) {
-  return doc.page.width - doc.page.margins.left - doc.page.margins.right;
+function monthRows(report: AnyRow, selectedMonth: number) {
+  return (report.monthlyTrend || []).filter((row: AnyRow) => Number(row.month) <= selectedMonth);
 }
 
-function money(value: number) {
-  return new Intl.NumberFormat("es-CO", {
-    style: "currency",
-    currency: "COP",
-    maximumFractionDigits: 0
-  }).format(Number(value || 0));
+function branchLabel(value: string) {
+  const text = String(value || "").toUpperCase();
+  if (text === "CALLE 109") return "109";
+  if (text === "COLORS 162") return "162";
+  if (text === "VILLAVICENCIO") return "VILLAVO";
+  return text;
 }
 
-function int(value: number) {
-  return new Intl.NumberFormat("es-CO", { maximumFractionDigits: 0 }).format(Number(value || 0));
+function titleCase(value: string) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
-function percent(value: number) {
-  return `${Math.round(Number(value || 0) * 100)}%`;
-}
-
-function nullableScore(score: AnyRow) {
-  return score?.score === null || score?.score === undefined ? "Pendiente" : int(Math.round(score.score));
+function advisorChartName(value: string) {
+  const parts = titleCase(value).replace(/\s+/g, " ").trim().split(" ").filter(Boolean);
+  if (parts.length <= 2) return parts.join(" ");
+  if (parts.length === 3) return `${parts[0]} ${parts[2]}`;
+  return `${parts[0]} ${parts[2]} ${parts[3]}`.trim();
 }
 
 function scoreLabel(score: AnyRow) {
-  return `${nullableScore(score)} / ${score?.status ?? "Pendiente"}`;
+  if (!score || score.score === null || score.score === undefined) return "Pendiente";
+  return `${int(Math.round(score.score))} / ${score.status ?? "Pendiente"}`;
 }
 
 function cleanMarkdown(value: string) {
@@ -505,4 +615,35 @@ function cleanMarkdown(value: string) {
     .replace(/^\s*[-*]\s+/gm, "- ")
     .replace(/\r/g, "")
     .trim();
+}
+
+function daysInMonth(year: number, month: number) {
+  return new Date(year, month, 0).getDate();
+}
+
+function contentWidth(doc: PDFKit.PDFDocument) {
+  return doc.page.width - doc.page.margins.left - doc.page.margins.right;
+}
+
+function sum(rows: AnyRow[] | number[], key?: string) {
+  return rows.reduce((total: number, row: AnyRow | number) => total + Number(key ? (row as AnyRow)[key] || 0 : row || 0), 0);
+}
+
+function money(value: number) {
+  return `$${new Intl.NumberFormat("es-CO", { maximumFractionDigits: 0 }).format(Number(value || 0))}`;
+}
+
+function compactMoney(value: number) {
+  const number = Number(value || 0);
+  if (Math.abs(number) >= 1000000) return `$${Math.round(number / 1000000)}M`;
+  if (Math.abs(number) >= 1000) return `$${Math.round(number / 1000)}K`;
+  return money(number);
+}
+
+function int(value: number) {
+  return new Intl.NumberFormat("es-CO", { maximumFractionDigits: 0 }).format(Number(value || 0));
+}
+
+function percent(value: number) {
+  return `${(Number(value || 0) * 100).toFixed(1)}%`;
 }

@@ -312,32 +312,37 @@ export function calculateBranchScore(
 
 export function createTargetsFromBranchGoals(branch: {
   meta1: number;
-  meta2: number;
-  meta3: number;
-  meta4: number;
   daysInMonth: number;
+  advisorMeta1?: number;
 }) {
+  const advisorMeta1 = branch.advisorMeta1 ?? branch.meta1 / 2;
+  const advisorMeta2 = advisorMeta1 * 1.1;
+  const advisorMeta3 = advisorMeta1 * 1.2;
+  const advisorMeta4 = advisorMeta1 * 1.3;
+  const branchMeta2 = branch.meta1 * 1.1;
+  const branchMeta3 = branch.meta1 * 1.2;
+  const branchMeta4 = branch.meta1 * 1.3;
   const advisorTarget = {
-    activation: branch.meta1 / 2 * 0.6,
-    bronze: branch.meta1 / 2 * 0.7,
-    silver: branch.meta1 / 2 * 0.85,
-    meta1: branch.meta1 / 2,
-    meta2: branch.meta2 / 2,
-    meta3: branch.meta3 / 2,
-    meta4: branch.meta4 / 2,
-    dailyMeta4: branch.meta4 / 2 / branch.daysInMonth,
-    weeklyMeta4: branch.meta4 / 2 / 4.345
+    activation: advisorMeta1 * 0.6,
+    bronze: advisorMeta1 * 0.75,
+    silver: advisorMeta1 * 0.9,
+    meta1: advisorMeta1,
+    meta2: advisorMeta2,
+    meta3: advisorMeta3,
+    meta4: advisorMeta4,
+    dailyMeta4: advisorMeta4 / branch.daysInMonth,
+    weeklyMeta4: advisorMeta4 / 4.345
   };
   const branchTarget = {
     activation: branch.meta1 * 0.6,
-    bronze: branch.meta1 * 0.7,
-    silver: branch.meta1 * 0.85,
+    bronze: branch.meta1 * 0.75,
+    silver: branch.meta1 * 0.9,
     meta1: branch.meta1,
-    meta2: branch.meta2,
-    meta3: branch.meta3,
-    meta4: branch.meta4,
-    dailyMeta4: branch.meta4 / branch.daysInMonth,
-    weeklyMeta4: branch.meta4 / 4.345
+    meta2: branchMeta2,
+    meta3: branchMeta3,
+    meta4: branchMeta4,
+    dailyMeta4: branchMeta4 / branch.daysInMonth,
+    weeklyMeta4: branchMeta4 / 4.345
   };
   return { advisorTarget, branchTarget };
 }

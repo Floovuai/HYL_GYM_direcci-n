@@ -13,7 +13,7 @@ import {
   updateEvaluation
 } from "./importers";
 import { createManagerPdf } from "./pdfReport";
-import { buildAppState, buildManagerReport, buildQualityReport, exportRows, toCsv } from "./queries";
+import { buildAppState, buildManagerReport, buildQualityReport } from "./queries";
 
 loadLocalEnv();
 
@@ -28,14 +28,29 @@ const upload = multer({
   limits: { fileSize: 25 * 1024 * 1024 }
 });
 
+const EVO_DEFAULT_BASE_URL = "https://evo-integracao-api.w12app.com.br";
+const EVO_SALES_PATH = "/api/v2/sales";
+const EVO_AUTO_SYNC_INTERVAL_MS = 5 * 60 * 1000;
+const evoAutoSyncCache = new Map<string, number>();
+
 app.use(cors());
 app.use(express.json({ limit: "3mb" }));
 
 function publicSettingRow(row: { key: string; value: string; secret?: number; updated_at?: string }) {
-  const configured = row.secret ? Boolean(row.value) || Boolean(row.key === "groq_api_key" && process.env.GROQ_API_KEY) : undefined;
+  const configured = row.secret
+    ? Boolean(row.value) ||
+      Boolean(row.key === "groq_api_key" && process.env.GROQ_API_KEY) ||
+      Boolean(row.key === "evo_api_key" && (process.env.EVO_API_KEY || process.env.EVO_SECRET_KEY))
+    : undefined;
   return {
     ...row,
-    value: row.secret ? "" : row.value,
+    value: row.secret
+      ? ""
+      : row.key === "evo_base_url" && process.env.EVO_BASE_URL
+        ? process.env.EVO_BASE_URL
+        : row.key === "evo_dns" && process.env.EVO_DNS
+          ? process.env.EVO_DNS
+          : row.value,
     configured
   };
 }
@@ -45,9 +60,153 @@ async function integrationSettings() {
   const settings = Object.fromEntries(rows.map((row) => [row.key, row.value]));
   return {
     ...settings,
+    evo_base_url: String(process.env.EVO_BASE_URL || settings.evo_base_url || EVO_DEFAULT_BASE_URL).trim(),
+    evo_dns: String(process.env.EVO_DNS || settings.evo_dns || "").trim(),
+    evo_api_key: String(process.env.EVO_API_KEY || process.env.EVO_SECRET_KEY || settings.evo_api_key || "").trim(),
     groq_api_key: String(process.env.GROQ_API_KEY || settings.groq_api_key || "").trim(),
     groq_model: String(process.env.GROQ_MODEL || settings.groq_model || "llama-3.3-70b-versatile").trim()
   };
+}
+
+function currentBogotaPeriod() {
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Bogota",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  });
+  const parts = Object.fromEntries(formatter.formatToParts(new Date()).map((part) => [part.type, part.value]));
+  return {
+    year: Number(parts.year),
+    month: Number(parts.month),
+    day: Number(parts.day)
+  };
+}
+
+function monthDateRange(year: number, month: number) {
+  const start = `${year}-${String(month).padStart(2, "0")}-01`;
+  const endDate = new Date(Date.UTC(year, month, 0));
+  return {
+    start,
+    end: `${year}-${String(month).padStart(2, "0")}-${String(endDate.getUTCDate()).padStart(2, "0")}`
+  };
+}
+
+function evoSalesUrl(baseUrl: string, year: number, month: number, skip: number) {
+  const normalizedBase = baseUrl.match(/^https?:\/\//i) ? baseUrl : `https://${baseUrl}`;
+  const url = new URL(normalizedBase);
+  if (!url.pathname || url.pathname === "/") {
+    url.pathname = EVO_SALES_PATH;
+  }
+  const range = monthDateRange(year, month);
+  url.searchParams.set("dateSaleStart", range.start);
+  url.searchParams.set("dateSaleEnd", range.end);
+  url.searchParams.set("take", "100");
+  url.searchParams.set("skip", String(skip));
+  return url;
+}
+
+function evoAuthorization(dns: string, apiKey: string) {
+  return `Basic ${Buffer.from(`${dns}:${apiKey}`).toString("base64")}`;
+}
+
+function evoItemsFromPayload(payload: any): Record<string, unknown>[] {
+  const candidates = [
+    payload,
+    payload?.data,
+    payload?.items,
+    payload?.sales,
+    payload?.vendas,
+    payload?.records,
+    payload?.results,
+    payload?.result,
+    payload?.value
+  ];
+  for (const candidate of candidates) {
+    if (Array.isArray(candidate)) return candidate;
+    if (Array.isArray(candidate?.data)) return candidate.data;
+    if (Array.isArray(candidate?.items)) return candidate.items;
+    if (Array.isArray(candidate?.records)) return candidate.records;
+  }
+  return [];
+}
+
+function hasEvoSettings(settings: Record<string, any>) {
+  return Boolean(String(settings.evo_base_url || "").trim() && String(settings.evo_dns || "").trim() && String(settings.evo_api_key || "").trim());
+}
+
+async function fetchEvoSales(settings: Record<string, any>, year: number, month: number) {
+  const baseUrl = String(settings.evo_base_url || "").trim();
+  const dns = String(settings.evo_dns || "").trim();
+  const apiKey = String(settings.evo_api_key || "").trim();
+  const items: Record<string, unknown>[] = [];
+  let preview: unknown = null;
+
+  for (let skip = 0; skip < 5000; skip += 100) {
+    const response = await fetch(evoSalesUrl(baseUrl, year, month, skip), {
+      headers: {
+        Accept: "application/json",
+        Authorization: evoAuthorization(dns, apiKey)
+      }
+    });
+    if (!response.ok) {
+      throw new Error(`EVO respondio ${response.status}`);
+    }
+    const json = await response.json();
+    if (!preview) preview = json;
+    const pageItems = evoItemsFromPayload(json);
+    items.push(...pageItems);
+    if (pageItems.length < 100) break;
+  }
+
+  return { items, preview };
+}
+
+async function syncEvoSales(year: number, month: number, source = "manual") {
+  const settings = await integrationSettings();
+  if (!hasEvoSettings(settings)) {
+    throw new Error("Configura evo_base_url, evo_dns y evo_api_key primero");
+  }
+  const { items, preview } = await fetchEvoSales(settings, year, month);
+  if (!items.length) {
+    const error = new Error("La respuesta EVO no contiene una lista de ventas reconocible");
+    (error as Error & { preview?: unknown }).preview = preview;
+    throw error;
+  }
+
+  let summary;
+  await transaction(async () => {
+    summary = await importSalesObjects(items, {
+      sourceType: "evo",
+      sourceKey: `evo:${source}:${year}-${String(month).padStart(2, "0")}:${new Date().toISOString()}`,
+      replaceMonths: false
+    });
+  });
+  return summary;
+}
+
+async function autoSyncEvoIfCurrentMonth(year?: number, month?: number) {
+  const period = currentBogotaPeriod();
+  const selectedYear = year || period.year;
+  const selectedMonth = month || period.month;
+  if (selectedYear !== period.year || selectedMonth !== period.month) return null;
+
+  const settings = await integrationSettings();
+  if (!hasEvoSettings(settings)) return null;
+
+  const cacheKey = `${selectedYear}-${selectedMonth}`;
+  const now = Date.now();
+  const lastSync = evoAutoSyncCache.get(cacheKey) || 0;
+  if (now - lastSync < EVO_AUTO_SYNC_INTERVAL_MS) return null;
+
+  evoAutoSyncCache.set(cacheKey, now);
+  try {
+    return await syncEvoSales(selectedYear, selectedMonth, "auto");
+  } catch (error) {
+    evoAutoSyncCache.delete(cacheKey);
+    console.warn("No se pudo sincronizar EVO automaticamente:", error instanceof Error ? error.message : error);
+    return null;
+  }
 }
 
 async function askGroq(apiKey: string, model: string, messages: Array<{ role: "system" | "user"; content: string }>, maxTokens = 900) {
@@ -88,6 +247,7 @@ app.get("/api/state", async (req, res, next) => {
   try {
     const year = req.query.year ? Number(req.query.year) : undefined;
     const month = req.query.month ? Number(req.query.month) : undefined;
+    await autoSyncEvoIfCurrentMonth(year, month);
     res.json(await buildAppState(year, month));
   } catch (error) {
     next(error);
@@ -99,6 +259,17 @@ app.get("/api/quality/duplicates", async (req, res, next) => {
     const year = req.query.year ? Number(req.query.year) : undefined;
     const month = req.query.month ? Number(req.query.month) : undefined;
     res.json(await buildQualityReport(year, month));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/reports/gerencial", async (req, res, next) => {
+  try {
+    const year = Number(req.query.year || new Date().getFullYear());
+    const month = Number(req.query.month || new Date().getMonth() + 1);
+    await autoSyncEvoIfCurrentMonth(year, month);
+    res.json(await buildManagerReport(year, month));
   } catch (error) {
     next(error);
   }
@@ -163,52 +334,16 @@ app.post("/api/import/sales-excel", upload.single("file"), async (req, res, next
   }
 });
 
-app.post("/api/evo/sync", async (_req, res, next) => {
+app.post("/api/evo/sync", async (req, res, next) => {
   try {
-    const settings = Object.fromEntries(
-      (await all<{ key: string; value: string }>("SELECT key, value FROM settings")).map((row) => [row.key, row.value])
-    );
-    const baseUrl = String(settings.evo_base_url || "").trim();
-    const apiKey = String(settings.evo_api_key || "").trim();
-    if (!baseUrl) {
-      res.status(400).json({ error: "Configura evo_base_url primero" });
-      return;
-    }
-
-    const response = await fetch(baseUrl, {
-      headers: {
-        Accept: "application/json",
-        ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {})
-      }
-    });
-    if (!response.ok) {
-      res.status(response.status).json({ error: `EVO respondio ${response.status}` });
-      return;
-    }
-    const json = await response.json();
-    const items = Array.isArray(json)
-      ? json
-      : Array.isArray(json?.data)
-        ? json.data
-        : Array.isArray(json?.sales)
-          ? json.sales
-          : [];
-    if (!items.length) {
-      res.status(422).json({ error: "La respuesta EVO no contiene una lista de ventas reconocible", preview: json });
-      return;
-    }
-
-    let summary;
-    await transaction(async () => {
-      summary = await importSalesObjects(items, {
-        sourceType: "evo",
-        sourceKey: `evo:${new Date().toISOString()}`,
-        replaceMonths: false
-      });
-    });
+    const period = currentBogotaPeriod();
+    const year = Number(req.body?.year) || period.year;
+    const month = Number(req.body?.month) || period.month;
+    const summary = await syncEvoSales(year, month, "manual");
     res.json({ ok: true, summary });
   } catch (error) {
-    next(error);
+    const status = error instanceof Error && error.message.includes("lista de ventas reconocible") ? 422 : 400;
+    res.status(status).json({ error: error instanceof Error ? error.message : "No se pudo sincronizar EVO" });
   }
 });
 
@@ -280,6 +415,34 @@ app.get("/api/ai/health", async (_req, res, next) => {
       return;
     }
     res.json({ ok: true, model: settings.groq_model, answer: json.choices?.[0]?.message?.content ?? "" });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/evo/health", async (_req, res, next) => {
+  try {
+    const settings = await integrationSettings();
+    const baseUrl = String(settings.evo_base_url || "").trim();
+    const dns = String(settings.evo_dns || "").trim();
+    const apiKey = String(settings.evo_api_key || "").trim();
+    if (!baseUrl || !dns || !apiKey) {
+      res.status(400).json({ ok: false, error: "EVO no esta configurado completo" });
+      return;
+    }
+    const period = currentBogotaPeriod();
+    const response = await fetch(evoSalesUrl(baseUrl, period.year, period.month, 0), {
+      headers: {
+        Accept: "application/json",
+        Authorization: evoAuthorization(dns, apiKey)
+      }
+    });
+    if (!response.ok) {
+      res.status(response.status).json({ ok: false, error: `EVO respondio ${response.status}` });
+      return;
+    }
+    const json = await response.json();
+    res.json({ ok: true, dns, itemsRecognized: evoItemsFromPayload(json).length });
   } catch (error) {
     next(error);
   }
@@ -399,17 +562,8 @@ app.delete("/api/todos/:id", async (req, res, next) => {
   }
 });
 
-app.get("/api/export/:kind.csv", async (req, res, next) => {
-  try {
-    const year = Number(req.query.year || new Date().getFullYear());
-    const month = Number(req.query.month || new Date().getMonth() + 1);
-    const rows = await exportRows(req.params.kind, year, month);
-    res.header("Content-Type", "text/csv; charset=utf-8");
-    res.attachment(`${req.params.kind}-${year}-${month}.csv`);
-    res.send(toCsv(rows));
-  } catch (error) {
-    next(error);
-  }
+app.get("/api/export/:kind.csv", (_req, res) => {
+  res.status(410).json({ error: "Los informes gerenciales solo se exportan en PDF." });
 });
 
 app.get("/api/export/gerencial.pdf", async (req, res, next) => {

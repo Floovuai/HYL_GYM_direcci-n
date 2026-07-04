@@ -9,7 +9,7 @@ import {
   monthName
 } from "../shared/business";
 import type { AdvisorTarget, BranchTarget, EvaluationInput } from "../shared/types";
-import { all, get } from "./db";
+import { all, get, scalar } from "./db";
 
 type AnyRow = Record<string, any>;
 
@@ -21,6 +21,18 @@ function num(value: unknown): number {
 async function settings() {
   const rows = await all<{ key: string; value: string }>("SELECT key, value FROM settings");
   return Object.fromEntries(rows.map((row) => [row.key, row.value]));
+}
+
+function currentPeriod() {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Bogota",
+    year: "numeric",
+    month: "numeric"
+  }).formatToParts(new Date());
+  return {
+    year: Number(parts.find((part) => part.type === "year")?.value) || new Date().getFullYear(),
+    month: Number(parts.find((part) => part.type === "month")?.value) || new Date().getMonth() + 1
+  };
 }
 
 function publicSettings(map: Record<string, string>) {
@@ -147,8 +159,9 @@ async function annualTargetRows(year: number) {
 
 export async function buildAppState(year?: number, month?: number) {
   const settingMap = await settings();
-  const selectedYear = year || Number(settingMap.selected_year) || 2026;
-  const selectedMonth = month || Number(settingMap.selected_month) || 6;
+  const period = currentPeriod();
+  const selectedYear = year || period.year;
+  const selectedMonth = month || period.month;
   const scoreConfig = scoreSettings(settingMap);
   const commissionScheme = commissionSchemeForPeriod(selectedYear, selectedMonth);
   const targets = await targetRows(selectedYear, selectedMonth);
@@ -252,8 +265,8 @@ export async function buildAppState(year?: number, month?: number) {
       target,
       commission,
       score,
-      dailyGoal: target?.dailyMeta4 ?? 0,
-      monthlyGoal: target?.meta4 ?? 0,
+      dailyGoal: target ? target.meta1 / new Date(selectedYear, selectedMonth, 0).getDate() : 0,
+      monthlyGoal: target?.meta1 ?? 0,
       annualGoal: annualTargets.get(Number(row.branch_id))?.advisor_meta4 ?? 0,
       annualMeta1: annualTargets.get(Number(row.branch_id))?.advisor_meta1 ?? 0,
       annualMeta2: annualTargets.get(Number(row.branch_id))?.advisor_meta2 ?? 0,
@@ -273,42 +286,47 @@ export async function buildAppState(year?: number, month?: number) {
     advisorsByBranch.set(advisor.branchId, bucket);
   }
 
-  const branches = branchSales.map((row) => {
-    const branchId = Number(row.id);
-    const branchAdvisors = advisorsByBranch.get(branchId) ?? [];
-    const validScores = branchAdvisors.map((advisor) => advisor.score.score).filter((score): score is number => score !== null);
-    const avgAdvisorScore = validScores.length
-      ? validScores.reduce((sum, score) => sum + score, 0) / validScores.length
-      : 0;
-    const target = branchTarget(targets.get(branchId));
-    const score = calculateBranchScore(
-      {
+  const branches = branchSales
+    .map((row) => {
+      const branchId = Number(row.id);
+      const branchAdvisors = advisorsByBranch.get(branchId) ?? [];
+      const validScores = branchAdvisors.map((advisor) => advisor.score.score).filter((score): score is number => score !== null);
+      const avgAdvisorScore = validScores.length
+        ? validScores.reduce((sum, score) => sum + score, 0) / validScores.length
+        : 0;
+      const target = branchTarget(targets.get(branchId));
+      const score = calculateBranchScore(
+        {
+          sales: num(row.sales),
+          target,
+          conversions: num(row.rows_count),
+          discounts: 0,
+          advisorAverageScore: avgAdvisorScore,
+          advisorsWithSales: num(row.advisors_with_sales),
+          expectedAdvisors: Math.max(branchAdvisors.length, 1),
+          monthlyConversionGoalPerAdvisor: scoreConfig.monthlyConversionGoalPerAdvisor,
+          maxDiscountRate: scoreConfig.maxDiscountRate
+        },
+        scoreConfig
+      );
+      const directorCommission = calculateDirectorCommission(num(row.sales), target);
+      return {
+        id: branchId,
+        code: row.code,
+        name: row.name,
         sales: num(row.sales),
-        target,
-        conversions: num(row.rows_count),
-        discounts: 0,
-        advisorAverageScore: avgAdvisorScore,
+        rows: num(row.rows_count),
         advisorsWithSales: num(row.advisors_with_sales),
-        expectedAdvisors: Math.max(branchAdvisors.length, 1),
-        monthlyConversionGoalPerAdvisor: scoreConfig.monthlyConversionGoalPerAdvisor,
-        maxDiscountRate: scoreConfig.maxDiscountRate
-      },
-      scoreConfig
-    );
-    const directorCommission = calculateDirectorCommission(num(row.sales), target);
-    return {
-      id: branchId,
-      code: row.code,
-      name: row.name,
-      sales: num(row.sales),
-      rows: num(row.rows_count),
-      advisorsWithSales: num(row.advisors_with_sales),
-      expectedAdvisors: branchAdvisors.length,
-      target,
-      score,
-      directorCommission
-    };
-  });
+        expectedAdvisors: branchAdvisors.length,
+        target,
+        score,
+        directorCommission
+      };
+    })
+    .filter((branch) => {
+      const isPlaceholderBranch = String(branch.name ?? "").trim().toUpperCase() === "SIN SEDE";
+      return !isPlaceholderBranch || branch.sales > 0 || Boolean(branch.target);
+    });
 
   const plans = await all<AnyRow>(
     `SELECT
@@ -370,6 +388,26 @@ export async function buildAppState(year?: number, month?: number) {
 
   const todos = await all<AnyRow>("SELECT * FROM todos ORDER BY CASE priority WHEN 'Alta' THEN 1 WHEN 'Media' THEN 2 ELSE 3 END, due_date IS NULL, due_date");
   const imports = await all<AnyRow>("SELECT * FROM import_batches ORDER BY imported_at DESC LIMIT 8");
+  const positiveCoverage = await get<AnyRow>(
+    `SELECT
+      MAX(sold_at) last_positive_sale,
+      MAX(day) last_positive_day,
+      COUNT(*) positive_rows,
+      COALESCE(SUM(value), 0) positive_sales
+     FROM sales
+     WHERE year = ? AND month = ? AND value > 0`,
+    [selectedYear, selectedMonth]
+  );
+  const zeroCoverage = await get<AnyRow>(
+    `SELECT MAX(sold_at) last_zero_sale, MAX(day) last_zero_day, COUNT(*) zero_rows
+     FROM sales
+     WHERE year = ? AND month = ? AND value = 0`,
+    [selectedYear, selectedMonth]
+  );
+  const latestImport = imports[0] ?? null;
+  const lastPositiveDay = num(positiveCoverage?.last_positive_day);
+  const daysInSelectedMonth = new Date(selectedYear, selectedMonth, 0).getDate();
+  const pendingFromDay = lastPositiveDay > 0 && lastPositiveDay < daysInSelectedMonth ? lastPositiveDay + 1 : null;
 
   const totalTarget = branches.reduce((sum, branch) => sum + (branch.target?.meta1 ?? 0), 0);
   const totalSales = num(salesSummary?.total_sales);
@@ -393,7 +431,27 @@ export async function buildAppState(year?: number, month?: number) {
       selectedYear,
       selectedMonth,
       selectedMonthName: monthName(selectedMonth),
-      years: years.map((row) => Number(row.year)).filter(Boolean)
+      years: years.map((row) => Number(row.year)).filter(Boolean),
+      dataCoverage: {
+        lastPositiveSale: positiveCoverage?.last_positive_sale ?? null,
+        lastPositiveDay: lastPositiveDay || null,
+        positiveRows: num(positiveCoverage?.positive_rows),
+        positiveSales: num(positiveCoverage?.positive_sales),
+        lastZeroSale: zeroCoverage?.last_zero_sale ?? null,
+        lastZeroDay: num(zeroCoverage?.last_zero_day) || null,
+        zeroRows: num(zeroCoverage?.zero_rows),
+        latestImport: latestImport
+          ? {
+              sourceType: latestImport.source_type,
+              sourceFile: latestImport.source_file,
+              rowsRead: num(latestImport.rows_read),
+              rowsInserted: num(latestImport.rows_inserted),
+              totalValue: num(latestImport.total_value),
+              importedAt: latestImport.imported_at
+            }
+          : null,
+        pendingFromDay
+      }
     },
     kpis: {
       totalSales,
@@ -600,6 +658,21 @@ export async function buildManagerReport(year: number, month: number) {
     [year]
   );
   const currentBranchById = new Map(state.branches.map((branch: AnyRow) => [Number(branch.id), branch]));
+  const branchMonthlyRows = await all<AnyRow>(
+    `SELECT b.id branch_id, s.month, COALESCE(SUM(s.value), 0) sales
+     FROM branches b
+     LEFT JOIN sales s ON s.branch_id = b.id AND s.year = ? AND s.month <= ?
+     WHERE b.active = 1
+     GROUP BY b.id, s.month`,
+    [year, month]
+  );
+  const branchMonthly: Record<string, Record<string, number>> = {};
+  for (const row of branchMonthlyRows) {
+    const branchId = String(row.branch_id);
+    const monthKey = String(row.month);
+    if (!branchMonthly[branchId]) branchMonthly[branchId] = {};
+    branchMonthly[branchId][monthKey] = num(row.sales);
+  }
   const annualByBranch = branchRows.map((row) => {
     const id = Number(row.id);
     const sales = num(row.sales);
@@ -644,7 +717,7 @@ export async function buildManagerReport(year: number, month: number) {
   });
 
   const planRows = await all<AnyRow>(
-    `SELECT p.id, p.name, p.category, COALESCE(SUM(s.value), 0) sales, COUNT(s.id) rows
+    `SELECT p.id, p.name, p.category, COALESCE(SUM(s.value), 0) sales, COUNT(s.id) rows, COUNT(DISTINCT s.branch_id) branch_count
      FROM plans p
      LEFT JOIN sales s ON s.plan_id = p.id AND s.year = ?
      GROUP BY p.id
@@ -664,10 +737,28 @@ export async function buildManagerReport(year: number, month: number) {
       category: row.category,
       sales,
       rows,
+      branchCount: num(row.branch_count),
       monthlySales: current?.sales ?? 0,
       score: comparativeScore(sales, maxAnnualPlanSales, rows, maxAnnualPlanRows)
     };
   });
+
+  const unassignedSales = await scalar<number>(
+    `SELECT COALESCE(SUM(value), 0)
+     FROM sales
+     WHERE year = ? AND month <= ? AND advisor_id IS NULL AND value > 0`,
+    [year, month]
+  );
+  const supportEvoSales = await scalar<number>(
+    `SELECT COALESCE(SUM(s.value), 0)
+     FROM sales s
+     JOIN advisors a ON a.id = s.advisor_id
+     WHERE s.year = ?
+       AND s.month <= ?
+       AND s.value > 0
+       AND UPPER(a.normalized_name) LIKE '%SUPORTEEVO%'`,
+    [year, month]
+  );
 
   const topDays = state.dailySales
     .slice()
@@ -685,9 +776,12 @@ export async function buildManagerReport(year: number, month: number) {
     },
     dailyTrend: state.dailySales,
     monthlyTrend,
+    branchMonthly,
     annualByBranch,
     annualByAdvisor,
     annualByPlan,
+    unassignedSales: num(unassignedSales),
+    supportEvoSales: num(supportEvoSales),
     topDays
   };
 }
@@ -755,36 +849,6 @@ function compactCurrency(value: number) {
     maximumFractionDigits: 0,
     notation: Math.abs(value) >= 1_000_000 ? "compact" : "standard"
   }).format(Number(value || 0));
-}
-
-export async function exportRows(kind: string, year: number, month: number) {
-  if (kind === "sales") {
-    return all(
-      `SELECT s.sold_at, b.display_name sede, a.name asesor, p.name plan, s.value, s.payment_method, s.origin
-       FROM sales s
-       LEFT JOIN branches b ON b.id = s.branch_id
-       LEFT JOIN advisors a ON a.id = s.advisor_id
-       LEFT JOIN plans p ON p.id = s.plan_id
-       WHERE s.year = ? AND s.month = ?
-       ORDER BY s.sold_at`,
-      [year, month]
-    );
-  }
-  const state = await buildAppState(year, month);
-  if (kind === "advisors") return state.advisors;
-  if (kind === "branches") return state.branches;
-  if (kind === "plans") return state.plans;
-  return [];
-}
-
-export function toCsv(rows: AnyRow[]) {
-  if (!rows.length) return "";
-  const headers = Object.keys(rows[0]);
-  const escape = (value: unknown) => {
-    const text = value instanceof Date ? value.toISOString() : typeof value === "object" && value !== null ? JSON.stringify(value) : String(value ?? "");
-    return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
-  };
-  return [headers.join(","), ...rows.map((row) => headers.map((header) => escape(row[header])).join(","))].join("\n");
 }
 
 export function localDateLabel(iso: string) {

@@ -36,7 +36,8 @@ const DEFAULT_SETTINGS: Record<string, string> = {
   max_discount_rate: "0.03",
   score_high: "80",
   score_medium: "60",
-  evo_base_url: "",
+  evo_base_url: process.env.EVO_BASE_URL || "https://evo-integracao-api.w12app.com.br",
+  evo_dns: process.env.EVO_DNS || "",
   evo_api_key: "",
   groq_api_key: "",
   groq_model: process.env.GROQ_MODEL || "llama-3.3-70b-versatile",
@@ -100,7 +101,17 @@ function saleKey(input: {
 }
 
 async function loadSheet(filePath: string, sheet?: string) {
-  return (await readSheet(filePath, sheet ?? 1)) as SheetRow[];
+  const rows = (await readSheet(filePath, sheet ?? 1)) as unknown;
+  if (
+    Array.isArray(rows) &&
+    rows.length === 1 &&
+    rows[0] &&
+    typeof rows[0] === "object" &&
+    Array.isArray((rows[0] as { data?: unknown }).data)
+  ) {
+    return (rows[0] as { data: SheetRow[] }).data;
+  }
+  return rows as SheetRow[];
 }
 
 async function loadOptionalSheet(filePath: string, sheet: string) {
@@ -407,11 +418,16 @@ export async function importSalesWorkbook(
   };
 }
 
-function pickObjectValue(row: Record<string, unknown>, candidates: string[]) {
+function pickObjectValue(row: Record<string, unknown>, candidates: string[]): unknown {
   const indexed = new Map(Object.keys(row).map((key) => [normalizeKey(key), key]));
   for (const candidate of candidates) {
     const key = indexed.get(normalizeKey(candidate));
     if (key) return row[key];
+  }
+  for (const value of Object.values(row)) {
+    if (!value || typeof value !== "object" || value instanceof Date || Array.isArray(value)) continue;
+    const nested: unknown = pickObjectValue(value as Record<string, unknown>, candidates);
+    if (nested !== undefined) return nested;
   }
   return undefined;
 }
@@ -444,28 +460,33 @@ export async function importSalesObjects(
     saleKey: string;
     payload: Record<string, unknown>;
   }> = [];
+  const dateFields = ["Fecha de venta", "fecha_venta", "sold_at", "created_at", "fecha", "dateSale", "saleDate", "registrationDate", "dtSale", "dataVenda", "data", "createdDate"];
+  const advisorFields = ["Empleado comision", "Empleado comisión", "asesor", "advisor", "vendedor", "seller", "comercial", "employeeName", "salespersonName", "sellerName", "consultantName", "consultant", "employee", "funcionario", "userName"];
+  const branchFields = ["Sede/club", "sede", "club", "branch", "branchName", "nameBranch", "unitName", "gymName", "unidade", "filial"];
+  const planFields = ["Descripcion", "Descripción", "description", "descricao", "plan", "producto", "product", "item", "membershipName", "serviceName", "productName", "itemName", "nomePlano"];
+  const valueFields = ["Valor", "value", "total", "amount", "precio", "saleValue", "totalValue", "valor", "valorVenda", "price"];
+  const quantityFields = ["Cantidad", "quantity", "qty", "quantidade", "amountItems"];
+  const clientIdFields = ["ID", "client_id", "cliente_id", "memberId", "idMember", "idCliente", "idPessoa"];
+  const clientNameFields = ["Nombre", "client_name", "nombre", "memberName", "customerName", "nomeCliente", "nome"];
+  const clientLastNameFields = ["Apellido", "client_last_name", "apellido", "lastName", "surname"];
+  const itemTypeFields = ["Item", "Ítem", "tipo", "type", "itemType", "tipoItem"];
 
   for (const [index, item] of items.entries()) {
-    const soldAt = toDate(
-      pickObjectValue(item, ["Fecha de venta", "fecha_venta", "sold_at", "created_at", "fecha"]) as CellValue
-    );
+    const soldAt = toDate(pickObjectValue(item, dateFields) as CellValue);
     if (!soldAt) continue;
-    if (
-      isRemovedAdvisor(pickObjectValue(item, ["Empleado comision", "Empleado comisión", "asesor", "advisor", "vendedor", "seller", "comercial"])) ||
-      hasRemovedAdvisorField(item)
-    ) {
+    if (isRemovedAdvisor(pickObjectValue(item, advisorFields)) || hasRemovedAdvisorField(item)) {
       continue;
     }
-    const branchId = await ensureBranch(pickObjectValue(item, ["Sede/club", "sede", "club", "branch"]));
-    const advisorId = await ensureAdvisor(
-      pickObjectValue(item, ["Empleado comision", "Empleado comisión", "asesor", "advisor", "vendedor", "seller", "comercial"]),
-      branchId
-    );
-    const planId = await ensurePlan(pickObjectValue(item, ["Descripcion", "Descripción", "plan", "producto", "item"]), {
+    const branchId = await ensureBranch(pickObjectValue(item, branchFields));
+    const advisorId = await ensureAdvisor(pickObjectValue(item, advisorFields), branchId);
+    const planId = await ensurePlan(pickObjectValue(item, planFields), {
       source: "EVO"
     });
-    const value = objectNumber(pickObjectValue(item, ["Valor", "value", "total", "amount", "precio"]));
-    const quantity = objectNumber(pickObjectValue(item, ["Cantidad", "quantity", "qty"])) || 1;
+    const value = objectNumber(pickObjectValue(item, valueFields));
+    if (sourceType === "evo" && value <= 0) {
+      continue;
+    }
+    const quantity = objectNumber(pickObjectValue(item, quantityFields)) || 1;
     const year = soldAt.getFullYear();
     const month = soldAt.getMonth() + 1;
     const day = soldAt.getDate();
@@ -485,8 +506,8 @@ export async function importSalesObjects(
         branchId,
         advisorId,
         planId,
-        clientExternalId: String(pickObjectValue(item, ["ID", "client_id", "cliente_id"]) ?? ""),
-        description: String(pickObjectValue(item, ["Descripcion", "Descripción", "plan", "producto"]) ?? ""),
+        clientExternalId: String(pickObjectValue(item, clientIdFields) ?? ""),
+        description: String(pickObjectValue(item, planFields) ?? ""),
         soldAt,
         value,
         quantity
@@ -514,11 +535,11 @@ export async function importSalesObjects(
         row.branchId,
         row.advisorId,
         row.planId,
-        String(pickObjectValue(row.payload, ["ID", "client_id", "cliente_id"]) ?? ""),
-        String(pickObjectValue(row.payload, ["Nombre", "client_name", "nombre"]) ?? ""),
-        String(pickObjectValue(row.payload, ["Apellido", "client_last_name", "apellido"]) ?? ""),
-        String(pickObjectValue(row.payload, ["Item", "Ítem", "tipo"]) ?? ""),
-        String(pickObjectValue(row.payload, ["Descripcion", "Descripción", "plan", "producto"]) ?? ""),
+        String(pickObjectValue(row.payload, clientIdFields) ?? ""),
+        String(pickObjectValue(row.payload, clientNameFields) ?? ""),
+        String(pickObjectValue(row.payload, clientLastNameFields) ?? ""),
+        String(pickObjectValue(row.payload, itemTypeFields) ?? ""),
+        String(pickObjectValue(row.payload, planFields) ?? ""),
         null,
         row.quantity,
         row.value,
@@ -597,9 +618,13 @@ export async function importCommissionWorkbook(filePath: string) {
     if (!year || !month || !branchName) continue;
     const branchId = await ensureBranch(branchName);
     const branchMeta1 = number(row, 12);
-    const branchMeta2 = number(row, 13);
-    const branchMeta3 = number(row, 14);
-    const branchMeta4 = number(row, 15);
+    const targetsForPeriod = await motivationalTargets({
+      branchId,
+      year,
+      month,
+      officialAdvisorMeta1: number(row, 8),
+      branchMeta1
+    });
     await run(
       `INSERT INTO monthly_targets (
         year, month, branch_id, growth_rate,
@@ -634,24 +659,24 @@ export async function importCommissionWorkbook(filePath: string) {
         month,
         branchId,
         number(row, 20),
-        number(row, 5),
-        number(row, 6),
-        number(row, 7),
-        number(row, 8),
-        number(row, 9),
-        number(row, 10),
-        number(row, 11),
-        number(row, 16),
-        number(row, 17),
-        branchMeta1 * 0.6,
-        branchMeta1 * 0.7,
-        branchMeta1 * 0.85,
-        branchMeta1,
-        branchMeta2,
-        branchMeta3,
-        branchMeta4,
-        number(row, 18),
-        number(row, 19),
+        targetsForPeriod.advisor.activation,
+        targetsForPeriod.advisor.bronze,
+        targetsForPeriod.advisor.silver,
+        targetsForPeriod.advisor.meta1,
+        targetsForPeriod.advisor.meta2,
+        targetsForPeriod.advisor.meta3,
+        targetsForPeriod.advisor.meta4,
+        targetsForPeriod.advisor.dailyMeta4,
+        targetsForPeriod.advisor.weeklyMeta4,
+        targetsForPeriod.branch.activation,
+        targetsForPeriod.branch.bronze,
+        targetsForPeriod.branch.silver,
+        targetsForPeriod.branch.meta1,
+        targetsForPeriod.branch.meta2,
+        targetsForPeriod.branch.meta3,
+        targetsForPeriod.branch.meta4,
+        targetsForPeriod.branch.dailyMeta4,
+        targetsForPeriod.branch.weeklyMeta4,
         path.basename(filePath)
       ]
     );
@@ -808,6 +833,112 @@ function metaByHeader(row: SheetRow, header: SheetRow, fromCol: number, toCol: n
   return 0;
 }
 
+function roundTarget(value: number) {
+  return Math.round(Number(value || 0) / 1000) * 1000;
+}
+
+function priorPeriod(year: number, month: number) {
+  if (year === 2026 && month >= 7) return { year: 2026, month: 6 };
+  return month === 1 ? { year: year - 1, month: 12 } : { year, month: month - 1 };
+}
+
+async function productiveAdvisorSales(branchId: number, year: number, month: number) {
+  const previous = priorPeriod(year, month);
+  const rows = await all<{ sales: number }>(
+    `SELECT COALESCE(SUM(s.value), 0) sales
+     FROM sales s
+     JOIN advisors a ON a.id = s.advisor_id
+     WHERE s.branch_id = ?
+       AND s.year = ?
+       AND s.month = ?
+       AND a.active = 1
+       AND a.excluded_from_commissions = 0
+     GROUP BY s.advisor_id
+     HAVING sales >= 10000000
+     ORDER BY sales DESC`,
+    [branchId, previous.year, previous.month]
+  );
+  return rows.map((row) => Number(row.sales || 0)).filter((value) => value > 0);
+}
+
+async function recentBranchSales(branchId: number, year: number, month: number) {
+  const previous = priorPeriod(year, month);
+  const beforePrevious = previous.month === 1 ? { year: previous.year - 1, month: 12 } : { year: previous.year, month: previous.month - 1 };
+  const rows = await all<{ month: number; sales: number }>(
+    `SELECT month, COALESCE(SUM(value), 0) sales
+     FROM sales
+     WHERE branch_id = ?
+       AND ((year = ? AND month = ?) OR (year = ? AND month = ?))
+     GROUP BY month`,
+    [branchId, previous.year, previous.month, beforePrevious.year, beforePrevious.month]
+  );
+  return rows.map((row) => Number(row.sales || 0)).filter((value) => value > 0);
+}
+
+async function motivationalTargets(input: {
+  branchId: number;
+  year: number;
+  month: number;
+  officialAdvisorMeta1: number;
+  branchMeta1: number;
+}) {
+  const days = new Date(input.year, input.month, 0).getDate();
+  const advisorHistory = await productiveAdvisorSales(input.branchId, input.year, input.month);
+  const branchHistory = await recentBranchSales(input.branchId, input.year, input.month);
+  let advisorMeta1 = input.officialAdvisorMeta1 || input.branchMeta1 / 2;
+  let branchMeta1 = input.branchMeta1;
+
+  if (advisorHistory.length) {
+    const average = advisorHistory.reduce((sum, value) => sum + value, 0) / advisorHistory.length;
+    const best = Math.max(...advisorHistory);
+    const historicalBase = average * 1.1;
+    const historicalFloor = best * 0.9;
+    const historicalCap = best * 1.15;
+    advisorMeta1 = Math.min(Math.max(historicalBase, historicalFloor), historicalCap);
+  }
+
+  if (branchHistory.length) {
+    const average = branchHistory.reduce((sum, value) => sum + value, 0) / branchHistory.length;
+    const previous = branchHistory[branchHistory.length - 1];
+    const historicalBase = average * 1.08;
+    const historicalFloor = previous * 0.9;
+    branchMeta1 = Math.max(historicalBase, historicalFloor);
+  }
+
+  advisorMeta1 = roundTarget(advisorMeta1);
+  const advisorMeta2 = roundTarget(advisorMeta1 * 1.1);
+  const advisorMeta3 = roundTarget(advisorMeta1 * 1.2);
+  const advisorMeta4 = roundTarget(advisorMeta1 * 1.3);
+  branchMeta1 = roundTarget(branchMeta1);
+  const branchMeta2 = roundTarget(branchMeta1 * 1.1);
+  const branchMeta3 = roundTarget(branchMeta1 * 1.2);
+  const branchMeta4 = roundTarget(branchMeta1 * 1.3);
+
+  return {
+    advisor: {
+      activation: roundTarget(advisorMeta1 * 0.6),
+      bronze: roundTarget(advisorMeta1 * 0.75),
+      silver: roundTarget(advisorMeta1 * 0.9),
+      meta1: advisorMeta1,
+      meta2: advisorMeta2,
+      meta3: advisorMeta3,
+      meta4: advisorMeta4,
+      dailyMeta4: advisorMeta4 / days,
+      weeklyMeta4: advisorMeta4 / 4.345
+    },
+    branch: {
+      activation: roundTarget(branchMeta1 * 0.6),
+      bronze: roundTarget(branchMeta1 * 0.75),
+      silver: roundTarget(branchMeta1 * 0.9),
+      meta1: branchMeta1,
+      meta2: branchMeta2,
+      meta3: branchMeta3,
+      meta4: branchMeta4,
+      dailyMeta4: branchMeta4 / days,
+      weeklyMeta4: branchMeta4 / 4.345
+    }
+  };
+}
 async function importAnnualTargetsFromPricing(filePath: string, rows: SheetRow[]) {
   for (let index = 0; index < rows.length; index += 1) {
     const title = text(rows[index], 2);

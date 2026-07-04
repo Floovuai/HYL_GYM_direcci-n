@@ -6,7 +6,6 @@ import {
   CalendarDays,
   CheckSquare,
   ClipboardList,
-  Download,
   Dumbbell,
   FileText,
   FileSpreadsheet,
@@ -69,6 +68,34 @@ function currency(value: number) {
     currency: "COP",
     maximumFractionDigits: 0
   }).format(Number(value || 0));
+}
+
+function compactCurrency(value: number) {
+  const number = Number(value || 0);
+  if (Math.abs(number) >= 1000000) return `$${Math.round(number / 1000000)}M`;
+  if (Math.abs(number) >= 1000) return `$${Math.round(number / 1000)}K`;
+  return currency(number);
+}
+
+function dateTimeLabel(value?: string | null) {
+  if (!value) return "Sin registro";
+  const date = new Date(value.includes("T") ? value : value.replace(" ", "T") + "Z");
+  if (Number.isNaN(date.getTime())) return String(value);
+  return new Intl.DateTimeFormat("es-CO", {
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(date);
+}
+
+function coverageLabel(state?: AppState | null) {
+  const coverage = state?.filters?.dataCoverage;
+  if (!coverage) return "";
+  const loaded = coverage.lastPositiveDay ? `Ventas positivas hasta día ${coverage.lastPositiveDay}` : "Sin ventas positivas cargadas";
+  const pending = coverage.pendingFromDay ? `pendiente desde día ${coverage.pendingFromDay}` : "mes sin días positivos pendientes";
+  const imported = coverage.latestImport?.importedAt ? `último import ${dateTimeLabel(coverage.latestImport.importedAt)}` : "sin imports registrados";
+  return `${loaded} · ${pending} · ${imported}`;
 }
 
 function percent(value: number) {
@@ -224,11 +251,20 @@ function Empty() {
   return <div className="empty">Sin registros para el filtro actual.</div>;
 }
 
+function currentPeriod() {
+  const now = new Date();
+  return {
+    year: now.getFullYear(),
+    month: now.getMonth() + 1
+  };
+}
+
 function App() {
+  const initialPeriod = React.useMemo(currentPeriod, []);
   const [tab, setTab] = React.useState<TabId>("dashboard");
   const [state, setState] = React.useState<AppState | null>(null);
-  const [year, setYear] = React.useState(2026);
-  const [month, setMonth] = React.useState(6);
+  const [year, setYear] = React.useState(initialPeriod.year);
+  const [month, setMonth] = React.useState(initialPeriod.month);
   const [loading, setLoading] = React.useState(true);
   const [notice, setNotice] = React.useState("");
   const [exportOpen, setExportOpen] = React.useState(false);
@@ -292,6 +328,7 @@ function App() {
           <div>
             <h1>{tabs.find((item) => item.id === tab)?.label}</h1>
             <p>{state?.filters.selectedMonthName} {state?.filters.selectedYear}</p>
+            {state ? <small className="data-coverage">{coverageLabel(state)}</small> : null}
           </div>
           <div className="actions">
             <select value={year} onChange={(event) => setYear(Number(event.target.value))}>
@@ -652,7 +689,6 @@ function Branches({ state }: { state: AppState }) {
     <div className="view">
       <div className="kpi-grid">
         <Kpi label="Score sedes" value={Math.round(state.kpis.averageBranchScore || 0).toString()} />
-        <Kpi label="Comision director" value={currency(state.kpis.totalDirectorCommissions)} tone="amber" />
         <Kpi label="Sedes con venta" value={String(state.kpis.activeBranches)} tone="blue" />
         <Kpi label="Meta total" value={currency(state.kpis.totalTarget)} tone="red" />
       </div>
@@ -666,8 +702,8 @@ function Branches({ state }: { state: AppState }) {
             <div className="metric-row"><span>Ventas</span><strong>{currency(branch.sales)}</strong></div>
             <div className="metric-row"><span>Meta 1</span><strong>{branch.target ? currency(branch.target.meta1) : "Sin meta"}</strong></div>
             <Progress value={branch.score.progressMeta1} />
-            <div className="metric-row"><span>Director</span><strong>{currency(branch.directorCommission.bonus)}</strong></div>
-            <div className="metric-row"><span>Nivel</span><strong>{branch.directorCommission.level}</strong></div>
+            <div className="metric-row"><span>Avance</span><strong>{percent(branch.score.progressMeta1)}</strong></div>
+            <div className="metric-row"><span>Registros</span><strong>{branch.rows}</strong></div>
           </article>
         ))}
       </div>
@@ -742,51 +778,174 @@ function Marketing({ state, onReload }: { state: AppState; onReload: () => Promi
 }
 
 function BoardReports({ state, year, month }: { state: AppState; year: number; month: number }) {
-  const downloads = [
-    { kind: "sales", label: "Ventas" },
-    { kind: "branches", label: "Sedes" },
-    { kind: "advisors", label: "Asesores" },
-    { kind: "plans", label: "Planes" }
-  ];
+  const [report, setReport] = React.useState<any>(null);
+  const [loading, setLoading] = React.useState(false);
+
+  React.useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    fetch(`/api/reports/gerencial?year=${year}&month=${month}`)
+      .then((res) => res.json())
+      .then((json) => {
+        if (alive) setReport(json);
+      })
+      .catch(() => {
+        if (alive) setReport(null);
+      })
+      .finally(() => {
+        if (alive) setLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [year, month]);
+
+  const model = report || {
+    state,
+    monthlyTrend: [],
+    annualByBranch: state.boardReports.byBranch,
+    annualByAdvisor: state.boardReports.byAdvisor,
+    annualByPlan: state.boardReports.byPlan,
+    dailyTrend: state.boardReports.byDay,
+    topDays: []
+  };
+  const months = (model.monthlyTrend || []).filter((row: any) => Number(row.month) <= month);
+  const total = months.reduce((sum: number, row: any) => sum + Number(row.sales || 0), 0) || state.kpis.totalSales;
+  const bestMonth = months.slice().sort((a: any, b: any) => Number(b.sales || 0) - Number(a.sales || 0))[0];
+  const branches = (model.annualByBranch || []).filter((row: any) => Number(row.sales || 0) > 0).slice(0, 8);
+  const advisors = (model.annualByAdvisor || []).filter((row: any) => Number(row.sales || 0) > 0);
+  const topAdvisorRows = advisors.slice(0, 18).map((row: any) => ({
+    ...row,
+    reportChartName: advisorChartName(row.name)
+  }));
+  const advisorChartHeight = Math.max(460, topAdvisorRows.length * 30);
+  const plans = (model.annualByPlan || []).filter((row: any) => Number(row.sales || 0) > 0);
+  const totalPlans = plans.reduce((sum: number, row: any) => sum + Number(row.sales || 0), 0);
+
   return (
-    <div className="view">
-      <div className="download-row">
-        {downloads.map((item) => (
-          <a key={item.kind} href={`/api/export/${item.kind}.csv?year=${year}&month=${month}`}>
-            <Download size={16} />
-            {item.label} CSV
-          </a>
-        ))}
-      </div>
-      <div className="grid two">
-        <ReportTable title="Por sede" rows={state.boardReports.byBranch} columns={["name", "sales", "rows"]} />
-        <ReportTable title="Por asesor" rows={state.boardReports.byAdvisor.slice(0, 16)} columns={["name", "branchName", "sales"]} />
-        <ReportTable title="Por plan" rows={state.boardReports.byPlan.slice(0, 16)} columns={["name", "sales", "rows"]} />
-        <ReportTable title="Diario" rows={state.boardReports.byDay} columns={["day", "sales", "rows"]} />
-      </div>
+    <div className="view report-view">
+      {loading ? <div className="notice">Actualizando informe gerencial...</div> : null}
+      <section className="report-page">
+        <h2>Informe sedes y asesores - Enero a {state.filters.selectedMonthName} {state.filters.selectedYear}</h2>
+        <h3>Dinero ingresado: {currency(total)} | Promedio mensual: {currency(total / Math.max(months.length, 1))} | Mejor mes: {bestMonth?.label || state.filters.selectedMonthName} ({currency(bestMonth?.sales || 0)})</h3>
+        <p>Incluye ventas positivas disponibles en la plataforma. La informacion se actualiza con los datos cargados y el PDF conserva esta misma estructura.</p>
+        <ReportTable rows={months} columns={[
+          { key: "label", label: "Mes" },
+          { key: "sales", label: "Dinero ingresado", format: currency },
+          { key: "share", label: "% periodo", value: (row: any) => percent(total ? row.sales / total : 0) },
+          { key: "daily", label: "Promedio diario", value: (row: any) => currency(row.sales / new Date(year, row.month, 0).getDate()) },
+          { key: "rows", label: "Transacciones" }
+        ]} />
+        <ReportChart title="Rendimiento acumulado - dinero ingresado por mes" data={months} dataKey="sales" />
+      </section>
+
+      <section className="report-page">
+        <h2>Sedes</h2>
+        <ReportTable rows={branches} columns={[
+          { key: "name", label: "Sede" },
+          { key: "sales", label: "Dinero ingresado", format: currency },
+          { key: "share", label: "% periodo", value: (row: any) => percent(total ? row.sales / total : 0) },
+          { key: "rows", label: "Transacciones" },
+          { key: "ticket", label: "Ticket promedio", value: (row: any) => currency(row.sales / Math.max(row.rows, 1)) }
+        ]} />
+        <div className="report-chart-grid">
+          <ReportBar title="Ventas acumuladas por sede" data={branches} dataKey="sales" labelKey="name" />
+          <ReportChart title="Rendimiento por sede" data={months} dataKey="sales" />
+        </div>
+      </section>
+
+      <section className="report-page">
+        <h2>Asesores</h2>
+        <h3>Asesores con ventas positivas: {advisors.length} | Venta sin asesor asignado: {currency(model.unassignedSales || 0)} | Venta SUPORTEEVO positiva: {currency(model.supportEvoSales || 0)}</h3>
+        <ReportBar title="Top asesores por venta acumulada" data={topAdvisorRows} dataKey="sales" labelKey="reportChartName" height={advisorChartHeight} labelWidth={210} />
+        <ReportTable rows={advisors.slice(0, 24)} columns={[
+          { key: "name", label: "Asesor" },
+          { key: "branchName", label: "Sede" },
+          { key: "sales", label: "Dinero ingresado", format: currency },
+          { key: "rows", label: "Transacciones" },
+          { key: "ticket", label: "Ticket prom.", value: (row: any) => currency(row.sales / Math.max(row.rows, 1)) }
+        ]} />
+      </section>
+
+      <section className="report-page">
+        <h2>Rendimiento Diario Mensual</h2>
+        <div className="report-chart-grid">
+          <ReportChart title={`Rendimiento diario - ${state.filters.selectedMonthName}`} data={model.dailyTrend || []} dataKey="sales" labelKey="label" />
+          <ReportBar title="Dias de mayor facturacion" data={model.topDays || []} dataKey="sales" labelKey="label" />
+        </div>
+      </section>
+
+      <section className="report-page">
+        <h2>Rendimiento del Periodo de Planes</h2>
+        <h3>Ingreso por planes: {currency(totalPlans)} | Planes con ventas: {plans.length} | Transacciones de planes: {plans.reduce((sum: number, row: any) => sum + Number(row.rows || 0), 0)}</h3>
+        <ReportTable rows={plans.slice(0, 32)} columns={[
+          { key: "name", label: "Plan" },
+          { key: "sales", label: "Dinero ingresado", format: currency },
+          { key: "share", label: "% planes", value: (row: any) => percent(totalPlans ? row.sales / totalPlans : 0) },
+          { key: "rows", label: "Transacciones" },
+          { key: "ticket", label: "Ticket prom.", value: (row: any) => currency(row.sales / Math.max(row.rows, 1)) },
+          { key: "branchCount", label: "Sedes" }
+        ]} />
+        <div className="report-chart-grid">
+          <ReportBar title="Top planes por dinero ingresado" data={plans.slice(0, 16)} dataKey="sales" labelKey="name" />
+          <ReportBar title="Top planes por transacciones" data={plans.slice().sort((a: any, b: any) => Number(b.rows || 0) - Number(a.rows || 0)).slice(0, 16)} dataKey="rows" labelKey="name" color="#2563eb" />
+        </div>
+      </section>
     </div>
   );
 }
 
-function ReportTable({ title, rows, columns }: { title: string; rows: any[]; columns: string[] }) {
+function ReportChart({ title, data, dataKey, labelKey = "label" }: { title: string; data: any[]; dataKey: string; labelKey?: string }) {
   return (
-    <section className="panel">
-      <div className="panel-title"><h2>{title}</h2><ClipboardList size={18} /></div>
-      <div className="table-wrap small">
-        <table>
-          <thead><tr>{columns.map((col) => <th key={col}>{columnLabel(col)}</th>)}</tr></thead>
-          <tbody>
-            {rows.length ? rows.map((row, index) => (
-              <tr key={row.id ?? index}>
-                {columns.map((col) => (
-                  <td key={col}>{typeof row[col] === "number" && col !== "day" && col !== "rows" ? currency(row[col]) : String(row[col] ?? "")}</td>
-                ))}
-              </tr>
-            )) : <tr><td colSpan={columns.length}><Empty /></td></tr>}
-          </tbody>
-        </table>
-      </div>
-    </section>
+    <div className="report-chart">
+      <h3>{title}</h3>
+      <ResponsiveContainer width="100%" height={300}>
+        <ReLineChart data={data}>
+          <CartesianGrid strokeDasharray="3 3" />
+          <XAxis dataKey={labelKey} />
+          <YAxis tickFormatter={(value) => compactCurrency(Number(value))} />
+          <Tooltip formatter={(value) => currency(Number(value))} />
+          <Line type="monotone" dataKey={dataKey} stroke="#2563eb" strokeWidth={3} dot />
+        </ReLineChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+function ReportBar({ title, data, dataKey, labelKey, color = "#147d72", height = 320, labelWidth = 140 }: { title: string; data: any[]; dataKey: string; labelKey: string; color?: string; height?: number; labelWidth?: number }) {
+  return (
+    <div className="report-chart">
+      <h3>{title}</h3>
+      <ResponsiveContainer width="100%" height={height}>
+        <BarChart data={data} layout="vertical" margin={{ top: 8, left: 8, right: 32, bottom: 12 }}>
+          <CartesianGrid strokeDasharray="3 3" />
+          <XAxis type="number" tickFormatter={(value) => compactCurrency(Number(value))} />
+          <YAxis type="category" dataKey={labelKey} width={labelWidth} interval={0} tickLine={false} tick={{ fontSize: 12 }} />
+          <Tooltip formatter={(value) => typeof value === "number" && dataKey !== "rows" ? currency(value) : value} />
+          <Bar dataKey={dataKey} fill={color} />
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+function ReportTable({ rows, columns }: { rows: any[]; columns: Array<{ key: string; label: string; format?: (value: number) => string; value?: (row: any) => React.ReactNode }> }) {
+  return (
+    <div className="report-table">
+      <table>
+        <thead><tr>{columns.map((col) => <th key={col.key}>{col.label}</th>)}</tr></thead>
+        <tbody>
+          {rows.length ? rows.map((row, index) => (
+            <tr key={row.id ?? `${row.name || row.label}-${index}`}>
+              {columns.map((col) => {
+                const raw = col.value ? col.value(row) : row[col.key];
+                return <td key={col.key}>{col.format && typeof raw === "number" ? col.format(raw) : String(raw ?? "")}</td>;
+              })}
+            </tr>
+          )) : <tr><td colSpan={columns.length}>Sin registros</td></tr>}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -963,6 +1122,7 @@ function DirectionColumn({ title, items, fallback = [] }: { title: string; items
 function Configuration({ state, onReload, setNotice }: { state: AppState; onReload: () => Promise<void>; setNotice: (value: string) => void }) {
   const [settings, setSettings] = React.useState({
     evo_base_url: state.settings.evo_base_url || "",
+    evo_dns: state.settings.evo_dns || "",
     evo_api_key: "",
     groq_api_key: "",
     groq_model: state.settings.groq_model || "llama-3.3-70b-versatile"
@@ -974,11 +1134,12 @@ function Configuration({ state, onReload, setNotice }: { state: AppState; onRelo
   React.useEffect(() => {
     setSettings({
       evo_base_url: state.settings.evo_base_url || "",
+      evo_dns: state.settings.evo_dns || "",
       evo_api_key: "",
       groq_api_key: "",
       groq_model: state.settings.groq_model || "llama-3.3-70b-versatile"
     });
-  }, [state.settings.evo_base_url, state.settings.groq_model]);
+  }, [state.settings.evo_base_url, state.settings.evo_dns, state.settings.groq_model]);
 
   async function saveSettings() {
     await fetch("/api/settings", {
@@ -999,6 +1160,22 @@ function Configuration({ state, onReload, setNotice }: { state: AppState; onRelo
     await onReload();
   }
 
+  async function testGroq() {
+    setNotice("Probando Groq...");
+    const res = await fetch("/api/ai/health");
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || "Groq no respondió");
+    setNotice(`Groq conectado: ${json.model}`);
+  }
+
+  async function testEvo() {
+    setNotice("Probando EVO...");
+    const res = await fetch("/api/evo/health");
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || "EVO no respondió");
+    setNotice(`EVO conectado: DNS ${json.dns}. Ventas reconocidas en prueba: ${json.itemsRecognized}`);
+  }
+
   return (
     <div className="view">
       <section className="panel">
@@ -1011,17 +1188,24 @@ function Configuration({ state, onReload, setNotice }: { state: AppState; onRelo
           <>
             <div className="form-grid">
               <input value={settings.evo_base_url} onChange={(event) => setSettings({ ...settings, evo_base_url: event.target.value })} placeholder="URL EVO" />
-              <input value={settings.evo_api_key} onChange={(event) => setSettings({ ...settings, evo_api_key: event.target.value })} placeholder={evoConfigured ? "Clave API EVO configurada" : "Clave API EVO"} type="password" />
+              <input value={settings.evo_dns} onChange={(event) => setSettings({ ...settings, evo_dns: event.target.value })} placeholder="DNS EVO" />
+              <input value={settings.evo_api_key} onChange={(event) => setSettings({ ...settings, evo_api_key: event.target.value })} placeholder={evoConfigured ? "Token EVO configurado" : "Token EVO"} type="password" />
               <input value={settings.groq_api_key} onChange={(event) => setSettings({ ...settings, groq_api_key: event.target.value })} placeholder={groqConfigured ? "Clave API Groq configurada" : "Clave API Groq"} type="password" />
               <input value={settings.groq_model} onChange={(event) => setSettings({ ...settings, groq_model: event.target.value })} placeholder="Modelo GROQ" />
             </div>
             <div className="integration-status">
-              <span>Groq: {groqConfigured ? "configurado" : "pendiente"}</span>
-              <span>EVO: {evoConfigured ? "configurado" : "pendiente"}</span>
+              <span className={groqConfigured ? "ok" : "pending"}>Groq: {groqConfigured ? "clave guardada y activa" : "pendiente"}</span>
+              <span className={evoConfigured ? "ok" : "pending"}>EVO: {evoConfigured ? "token guardado y activo" : "pendiente"}</span>
+              <span className={settings.evo_dns ? "ok" : "pending"}>DNS EVO: {settings.evo_dns || "pendiente"}</span>
+            </div>
+            <div className="integration-note">
+              Las claves se guardan como secretas. Por seguridad no se muestran completas en pantalla; si escribes una nueva y guardas, se reemplaza la anterior.
             </div>
             <div className="button-row">
               <button onClick={saveSettings}>Guardar</button>
-              <button onClick={() => syncEvo().catch((error) => setNotice(error.message))}>EVO</button>
+              <button onClick={() => testGroq().catch((error) => setNotice(error.message))}>Probar Groq</button>
+              <button onClick={() => testEvo().catch((error) => setNotice(error.message))}>Probar EVO</button>
+              <button onClick={() => syncEvo().catch((error) => setNotice(error.message))}>Sincronizar EVO ahora</button>
             </div>
           </>
         ) : (
@@ -1040,13 +1224,13 @@ const historicalAdvisorCommissionLevels = [
 ];
 
 const advisorCommissionLevels = [
-  { level: "Activación", condition: "Alcanza meta de activación", rate: 0.0015, bonus: 0 },
-  { level: "Bronce", condition: "Alcanza meta bronce", rate: 0.0025, bonus: 0 },
-  { level: "Plata", condition: "Alcanza meta plata", rate: 0.0035, bonus: 0 },
-  { level: "Meta 1", condition: "Alcanza Meta 1", rate: 0.005, bonus: 0 },
-  { level: "Meta 2", condition: "Alcanza Meta 2", rate: 0.008, bonus: 0 },
-  { level: "Meta 3", condition: "Alcanza Meta 3", rate: 0.012, bonus: 0 },
-  { level: "Meta 4", condition: "Alcanza Meta 4", rate: 0.02, bonus: 500000 }
+  { level: "Activación", condition: "60% de Meta 1 asesor", rate: 0.0015, bonus: 0 },
+  { level: "Bronce", condition: "75% de Meta 1 asesor", rate: 0.0025, bonus: 0 },
+  { level: "Plata", condition: "90% de Meta 1 asesor", rate: 0.0035, bonus: 0 },
+  { level: "Meta 1", condition: "100% de Meta 1 asesor", rate: 0.005, bonus: 0 },
+  { level: "Meta 2", condition: "110% de Meta 1 asesor", rate: 0.008, bonus: 0 },
+  { level: "Meta 3", condition: "120% de Meta 1 asesor", rate: 0.012, bonus: 0 },
+  { level: "Meta 4", condition: "130% de Meta 1 asesor", rate: 0.02, bonus: 500000 }
 ];
 
 const evaluationMultipliers = [
@@ -1111,6 +1295,11 @@ function CommissionMechanics({ state }: { state: AppState }) {
 
       <div className="guide-block">
         <h3>3. Nuevo esquema desde julio 2026</h3>
+        <p>Desde julio, Meta 1 de sede se calibra con ventas reales recientes de la sede, no solo con la proyección oficial. Se usa el promedio de los dos meses previos con crecimiento exigente, y se protege un piso cuando junio fue fuerte para que la meta no quede demasiado fácil.</p>
+        <code>Meta 1 sede = mayor entre promedio real reciente x 1,08 y 90% de la venta del mes anterior</code>
+        <p>La Meta 1 del asesor se calibra con asesores productivos de la sede. Se exige crecimiento sobre el promedio, con piso contra el mejor resultado reciente y techo para que siga siendo realizable.</p>
+        <code>Meta 1 asesor = entre promedio productivo x 1,10, 90% del mejor asesor y máximo 115% del mejor asesor reciente</code>
+        <p>Meta 4 sigue siendo sobresaliente; la referencia principal de gestión diaria es Meta 1.</p>
       </div>
       <div className="table-wrap small">
         <table>
@@ -1131,7 +1320,13 @@ function CommissionMechanics({ state }: { state: AppState }) {
       </div>
 
       <div className="guide-block">
-        <h3>4. Ajuste por calidad y gestión</h3>
+        <h3>4. Composición de metas desde julio</h3>
+        <p>La sede y el asesor tienen metas recalibradas por separado. La sede parte de ventas reales recientes; el asesor parte del desempeño de asesores productivos. Desde cada Meta 1 se construyen niveles escalonados: 60%, 75%, 90%, 100%, 110%, 120% y 130%.</p>
+        <code>Activación 60% · Bronce 75% · Plata 90% · Meta 1 100% · Meta 2 110% · Meta 3 120% · Meta 4 130%</code>
+      </div>
+
+      <div className="guide-block">
+        <h3>5. Ajuste por calidad y gestión</h3>
         <p>La evaluación mensual impacta la comisión. Si el asesor tiene calidad y gestión excelentes, la comisión se multiplica dos veces por 1,15. Si tiene una evaluación baja, se reduce.</p>
       </div>
       <div className="mini-grid">
@@ -1145,7 +1340,7 @@ function CommissionMechanics({ state }: { state: AppState }) {
       </div>
 
       <div className="guide-block">
-        <h3>5. Cómo se calculan tus comisiones como director</h3>
+        <h3>6. Cómo se calculan tus comisiones como director</h3>
         <p>Tu comisión se calcula por sede. Cada sede se evalúa contra sus metas del mes. Si una sede llega a Meta 1, Meta 2 o Meta 3, genera un bono fijo. El total del director es la suma de los bonos de todas las sedes.</p>
       </div>
       <div className="table-wrap small">
@@ -1166,7 +1361,7 @@ function CommissionMechanics({ state }: { state: AppState }) {
       </div>
 
       <div className="guide-block">
-        <h3>6. Diferencia entre comisión y score</h3>
+        <h3>7. Diferencia entre comisión y score</h3>
         <p>La comisión paga el resultado económico según metas y evaluaciones. El score acumula componentes de salud comercial: avance a Meta 1, avance a Meta 4, calidad, gestión, conversiones y descuentos. Sirve para priorizar seguimiento y acciones comerciales.</p>
       </div>
 

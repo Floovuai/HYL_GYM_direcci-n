@@ -23,12 +23,28 @@ La plataforma separa dos esquemas:
 | Nivel | Condicion | Comision |
 | --- | --- | --- |
 | Activacion | 60% de Meta 1 asesor | 0.15% |
-| Bronce | 70% de Meta 1 asesor | 0.25% |
-| Plata | 85% de Meta 1 asesor | 0.35% |
+| Bronce | 75% de Meta 1 asesor | 0.25% |
+| Plata | 90% de Meta 1 asesor | 0.35% |
 | Meta 1 | 100% de Meta 1 asesor | 0.50% |
-| Meta 2 | 100% de Meta 2 asesor | 0.80% |
-| Meta 3 | 100% de Meta 3 asesor | 1.20% |
-| Meta 4 | 100% de Meta 4 asesor | 2.00% + 500.000 |
+| Meta 2 | 110% de Meta 1 asesor | 0.80% |
+| Meta 3 | 120% de Meta 1 asesor | 1.20% |
+| Meta 4 | 130% de Meta 1 asesor | 2.00% + 500.000 |
+
+Las metas desde julio separan la exigencia de sede y la exigencia de asesor:
+
+- Meta 1 de sede conserva la proyeccion oficial de crecimiento.
+- Meta 1 de asesor se calibra por sede con desempeno real reciente de asesores productivos.
+- La meta del asesor exige crecimiento sobre el promedio productivo, pero se limita contra el mejor resultado reciente para que sea retadora y realizable.
+
+```text
+Meta 1 asesor = meta calibrada entre promedio productivo x 1,10 y mejor asesor reciente x 1,15
+Activacion = 60% de Meta 1 asesor
+Bronce = 75% de Meta 1 asesor
+Plata = 90% de Meta 1 asesor
+Meta 2 = 110% de Meta 1 asesor
+Meta 3 = 120% de Meta 1 asesor
+Meta 4 = 130% de Meta 1 asesor
+```
 
 Formula:
 
