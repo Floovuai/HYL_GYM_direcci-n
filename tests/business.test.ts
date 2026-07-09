@@ -11,8 +11,8 @@ import type { AdvisorTarget, BranchTarget } from "../src/shared/types";
 
 const advisorTarget: AdvisorTarget = {
   activation: 60,
-  bronze: 70,
-  silver: 85,
+  bronze: 75,
+  silver: 90,
   meta1: 100,
   meta2: 120,
   meta3: 140,
@@ -23,8 +23,8 @@ const advisorTarget: AdvisorTarget = {
 
 const branchTarget: BranchTarget = {
   activation: 600,
-  bronze: 700,
-  silver: 850,
+  bronze: 750,
+  silver: 900,
   meta1: 1000,
   meta2: 1200,
   meta3: 1400,
@@ -118,10 +118,11 @@ describe("mecanica comercial HYL", () => {
     expect(result.score).toBeCloseTo(89.5);
   });
 
-  it("liquida director por Meta 1, 2 y 3", () => {
+  it("liquida director por Meta 1, 2, 3 y 4", () => {
     expect(calculateDirectorCommission(1000, branchTarget).bonus).toBe(100000);
     expect(calculateDirectorCommission(1200, branchTarget).bonus).toBe(200000);
     expect(calculateDirectorCommission(1400, branchTarget).bonus).toBe(500000);
+    expect(calculateDirectorCommission(1600, branchTarget).bonus).toBe(700000);
     expect(calculateDirectorCommission(999, branchTarget).bonus).toBe(0);
   });
 });

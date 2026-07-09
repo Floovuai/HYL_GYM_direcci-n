@@ -34,6 +34,80 @@ export const DEFAULT_SCORE_SETTINGS = {
   scoreMedium: 60
 };
 
+const OFFICIAL_2026_BRANCH_META1: Record<number, Record<string, number>> = {
+  7: {
+    "BUENOS AIRES": 90300000,
+    "CALLE 109": 147900000,
+    "COLORS 162": 80200000,
+    MODELIA: 154700000,
+    ONLINE: 62400000,
+    "PRADO VERANIEGO": 93500000,
+    "SANTA MATILDE": 61500000,
+    VILLAVICENCIO: 87800000
+  },
+  8: {
+    "BUENOS AIRES": 91300000,
+    "CALLE 109": 155300000,
+    "COLORS 162": 81800000,
+    MODELIA: 157800000,
+    ONLINE: 63600000,
+    "PRADO VERANIEGO": 95400000,
+    "SANTA MATILDE": 62100000,
+    VILLAVICENCIO: 88700000
+  },
+  9: {
+    "BUENOS AIRES": 93100000,
+    "CALLE 109": 159700000,
+    "COLORS 162": 83400000,
+    MODELIA: 160900000,
+    ONLINE: 65500000,
+    "PRADO VERANIEGO": 97200000,
+    "SANTA MATILDE": 63400000,
+    VILLAVICENCIO: 90400000
+  },
+  10: {
+    "BUENOS AIRES": 95800000,
+    "CALLE 109": 162700000,
+    "COLORS 162": 88200000,
+    MODELIA: 170200000,
+    ONLINE: 67400000,
+    "PRADO VERANIEGO": 102800000,
+    "SANTA MATILDE": 65200000,
+    VILLAVICENCIO: 93100000
+  },
+  11: {
+    "BUENOS AIRES": 99400000,
+    "CALLE 109": 167100000,
+    "COLORS 162": 92200000,
+    MODELIA: 177900000,
+    ONLINE: 69900000,
+    "PRADO VERANIEGO": 107500000,
+    "SANTA MATILDE": 67700000,
+    VILLAVICENCIO: 96600000
+  },
+  12: {
+    "BUENOS AIRES": 106600000,
+    "CALLE 109": 174500000,
+    "COLORS 162": 96200000,
+    MODELIA: 185700000,
+    ONLINE: 73600000,
+    "PRADO VERANIEGO": 112200000,
+    "SANTA MATILDE": 72600000,
+    VILLAVICENCIO: 103600000
+  }
+};
+
+const OFFICIAL_2026_ADVISOR_COUNTS: Record<string, number> = {
+  "BUENOS AIRES": 2,
+  "CALLE 109": 3,
+  "COLORS 162": 2,
+  MODELIA: 3,
+  ONLINE: 2,
+  "PRADO VERANIEGO": 2,
+  "SANTA MATILDE": 3,
+  VILLAVICENCIO: 2
+};
+
 const COMMISSION_RATES: Record<CommissionLevel, { rate: number; fixedBonus: number }> = {
   "Sin venta": { rate: 0, fixedBonus: 0 },
   "Sin comision": { rate: 0, fixedBonus: 0 },
@@ -259,6 +333,9 @@ export function calculateDirectorCommission(sales: number, target?: BranchTarget
   if (!target || safeSales < target.meta1) {
     return { level: "Sin meta", bonus: 0, progressMeta1, missingMeta1, missingMeta4 };
   }
+  if (safeSales >= target.meta4) {
+    return { level: "META 4", bonus: 700000, progressMeta1, missingMeta1, missingMeta4 };
+  }
   if (safeSales >= target.meta3) {
     return { level: "META 3", bonus: 500000, progressMeta1, missingMeta1, missingMeta4 };
   }
@@ -345,4 +422,20 @@ export function createTargetsFromBranchGoals(branch: {
     weeklyMeta4: branchMeta4 / 4.345
   };
   return { advisorTarget, branchTarget };
+}
+
+export function officialIntegratedReportTargets2026(branchName: string, month: number) {
+  const branchKey = normalizeKey(branchName);
+  const branchMeta1 = OFFICIAL_2026_BRANCH_META1[month]?.[branchKey];
+  const advisorCount = OFFICIAL_2026_ADVISOR_COUNTS[branchKey];
+  if (!branchMeta1 || !advisorCount) return null;
+  const targets = createTargetsFromBranchGoals({
+    meta1: branchMeta1,
+    advisorMeta1: branchMeta1 / advisorCount,
+    daysInMonth: new Date(2026, month, 0).getDate()
+  });
+  return {
+    advisor: targets.advisorTarget,
+    branch: targets.branchTarget
+  };
 }

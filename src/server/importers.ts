@@ -2,7 +2,14 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { readSheet } from "read-excel-file/node";
-import { cleanDisplay, monthNumber, normalizeKey, ratingMultiplier, ratingScore } from "../shared/business";
+import {
+  cleanDisplay,
+  monthNumber,
+  normalizeKey,
+  officialIntegratedReportTargets2026,
+  ratingMultiplier,
+  ratingScore
+} from "../shared/business";
 import { all, get, run, scalar, transaction } from "./db";
 
 type CellValue = string | number | Date | boolean | null | undefined;
@@ -25,7 +32,14 @@ export interface ImportSummary {
   months: { year: number; month: number }[];
 }
 
-const EXCLUDED_ADVISORS = new Set(["SUPORTEEVO", "SOPORTEEVO", "VICTOR HERRERA", "SOPORTE EVO"]);
+const EXCLUDED_ADVISORS = new Set([
+  "SUPORTEEVO",
+  "SOPORTEEVO",
+  "VICTOR HERRERA",
+  "SOPORTE EVO",
+  "LAURA VALENTINA ALVAREZ ALVARADO"
+]);
+const ONLINE_ADVISORS = new Set(["XIOMARA OCHOA"]);
 const REMOVED_ADVISOR_HASHES = new Set([
   "95b803a174210f3ee1a181998036b489e84c7aebe86662d5b521e30568a6cb34",
   "a1a50593f8c5306e5571fbee2e33fa46a306a24cf579d1444829646ca3dfc2ec"
@@ -167,6 +181,10 @@ export function canonicalAdvisor(raw: unknown): string {
   return key;
 }
 
+function branchForAdvisor(rawBranch: unknown, rawAdvisor: unknown) {
+  return ONLINE_ADVISORS.has(canonicalAdvisor(rawAdvisor)) ? "ONLINE" : rawBranch;
+}
+
 function isRemovedAdvisor(raw: unknown) {
   const name = canonicalAdvisor(raw);
   if (!name) return false;
@@ -299,7 +317,7 @@ export async function importSalesWorkbook(
     if (!soldAt) continue;
     if (isRemovedAdvisor(text(row, 13))) continue;
     const value = number(row, 10);
-    const branchId = await ensureBranch(text(row, 1));
+    const branchId = await ensureBranch(branchForAdvisor(text(row, 1), text(row, 13)));
     const advisorId = await ensureAdvisor(text(row, 13), branchId);
     const planId = await ensurePlan(text(row, 7), { source: "Ventas" });
     const year = soldAt.getFullYear();
@@ -477,7 +495,7 @@ export async function importSalesObjects(
     if (isRemovedAdvisor(pickObjectValue(item, advisorFields)) || hasRemovedAdvisorField(item)) {
       continue;
     }
-    const branchId = await ensureBranch(pickObjectValue(item, branchFields));
+    const branchId = await ensureBranch(branchForAdvisor(pickObjectValue(item, branchFields), pickObjectValue(item, advisorFields)));
     const advisorId = await ensureAdvisor(pickObjectValue(item, advisorFields), branchId);
     const planId = await ensurePlan(pickObjectValue(item, planFields), {
       source: "EVO"
@@ -618,13 +636,14 @@ export async function importCommissionWorkbook(filePath: string) {
     if (!year || !month || !branchName) continue;
     const branchId = await ensureBranch(branchName);
     const branchMeta1 = number(row, 12);
-    const targetsForPeriod = await motivationalTargets({
+    const officialTargets = officialIntegratedReportTargets2026(branchName, month);
+    const targetsForPeriod = officialTargets ?? (await motivationalTargets({
       branchId,
       year,
       month,
       officialAdvisorMeta1: number(row, 8),
       branchMeta1
-    });
+    }));
     await run(
       `INSERT INTO monthly_targets (
         year, month, branch_id, growth_rate,
@@ -707,6 +726,13 @@ export async function importCommissionWorkbook(filePath: string) {
     const row = schema[rowNumber - 1];
     const level = text(row, 1);
     if (!level) continue;
+    const normalizedLevel = normalizeKey(level);
+    const conditionText =
+      normalizedLevel === "BRONCE"
+        ? "75% de Meta 1 asesor"
+        : normalizedLevel === "PLATA"
+          ? "90% de Meta 1 asesor"
+          : text(row, 2);
     await run(
       `INSERT INTO commission_tiers (level, condition_text, description, percentage, fixed_bonus, objective, sort_order)
        VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -717,7 +743,7 @@ export async function importCommissionWorkbook(filePath: string) {
         fixed_bonus=excluded.fixed_bonus,
         objective=excluded.objective,
         sort_order=excluded.sort_order`,
-      [level, text(row, 2), text(row, 3), number(row, 4), number(row, 5), text(row, 6), rowNumber - 5]
+      [level, conditionText, text(row, 3), number(row, 4), number(row, 5), text(row, 6), rowNumber - 5]
     );
   }
 
@@ -730,6 +756,22 @@ export async function importCommissionWorkbook(filePath: string) {
        VALUES (?, ?, ?, ?)
        ON CONFLICT(level) DO UPDATE SET condition_text=excluded.condition_text, fixed_bonus=excluded.fixed_bonus, sort_order=excluded.sort_order`,
       [level, text(row, 2), number(row, 3), rowNumber]
+    );
+  }
+
+  const officialDirectorTiers = [
+    { level: "Meta 1", condition: "La sede alcanza Meta 1", bonus: 100000 },
+    { level: "Meta 2", condition: "La sede alcanza Meta 2", bonus: 200000 },
+    { level: "Meta 3", condition: "La sede alcanza Meta 3", bonus: 500000 },
+    { level: "Meta 4", condition: "La sede alcanza Meta 4", bonus: 700000 }
+  ];
+  await run("DELETE FROM director_commission_tiers WHERE level IN ('META 1', 'META 2', 'META 3', 'META 4')");
+  for (const [index, tier] of officialDirectorTiers.entries()) {
+    await run(
+      `INSERT INTO director_commission_tiers (level, condition_text, fixed_bonus, sort_order)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(level) DO UPDATE SET condition_text=excluded.condition_text, fixed_bonus=excluded.fixed_bonus, sort_order=excluded.sort_order`,
+      [tier.level, tier.condition, tier.bonus, index + 1]
     );
   }
 }
@@ -996,8 +1038,8 @@ async function importAnnualTargetsFromPricing(filePath: string, rows: SheetRow[]
           month,
           branchId,
           advisorMeta1 * 0.6,
-          advisorMeta1 * 0.7,
-          advisorMeta1 * 0.85,
+          advisorMeta1 * 0.75,
+          advisorMeta1 * 0.9,
           advisorMeta1,
           advisorMeta2,
           advisorMeta3,
@@ -1005,8 +1047,8 @@ async function importAnnualTargetsFromPricing(filePath: string, rows: SheetRow[]
           advisorMeta4 / days,
           advisorMeta4 / 4.345,
           branchMeta1 * 0.6,
-          branchMeta1 * 0.7,
-          branchMeta1 * 0.85,
+          branchMeta1 * 0.75,
+          branchMeta1 * 0.9,
           branchMeta1,
           branchMeta2,
           branchMeta3,

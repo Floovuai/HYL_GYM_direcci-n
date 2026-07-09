@@ -10,7 +10,9 @@ import {
   FileText,
   FileSpreadsheet,
   LineChart,
+  Maximize2,
   Megaphone,
+  MessageCircle,
   RefreshCcw,
   Settings,
   Sparkles,
@@ -33,7 +35,7 @@ import {
 } from "recharts";
 import "./styles.css";
 
-type TabId = "dashboard" | "advisors" | "branches" | "marketing" | "growth" | "board" | "direction" | "settings" | "todos";
+type TabId = "dashboard" | "advisors" | "branches" | "marketing" | "growth" | "board" | "direction" | "assistant" | "settings" | "todos";
 
 type AppState = any;
 
@@ -45,6 +47,7 @@ const tabs: Array<{ id: TabId; label: string; icon: React.ElementType }> = [
   { id: "growth", label: "Crecimiento", icon: TrendingUp },
   { id: "board", label: "Informes gerenciales", icon: ClipboardList },
   { id: "direction", label: "Dirección", icon: Sparkles },
+  { id: "assistant", label: "Chat IA", icon: MessageCircle },
   { id: "settings", label: "Configuración", icon: Settings },
   { id: "todos", label: "Tareas", icon: CheckSquare }
 ];
@@ -307,6 +310,10 @@ function App() {
         // Evento informativo no critico.
       }
     });
+    events.addEventListener("catalog_updated", () => {
+      setNotice("Catalogo de planes EVO actualizado.");
+      load().catch((error) => setNotice(error.message));
+    });
     events.onerror = () => {
       setNotice("Reconectando actualizaciones en tiempo real...");
     };
@@ -401,10 +408,11 @@ function App() {
             {tab === "dashboard" && <Dashboard state={state} />}
             {tab === "advisors" && <Advisors state={state} year={year} month={month} onReload={load} />}
             {tab === "branches" && <Branches state={state} />}
-            {tab === "marketing" && <Marketing state={state} onReload={load} />}
+            {tab === "marketing" && <Marketing state={state} onReload={load} setNotice={setNotice} />}
             {tab === "growth" && <IntelligentGrowth state={state} />}
             {tab === "board" && <BoardReports state={state} year={year} month={month} />}
             {tab === "direction" && <Direction state={state} year={year} month={month} onReload={load} setNotice={setNotice} />}
+            {tab === "assistant" && <AiChat state={state} year={year} month={month} setNotice={setNotice} />}
             {tab === "settings" && <Configuration state={state} onReload={load} setNotice={setNotice} />}
             {tab === "todos" && <Todos state={state} onReload={load} />}
             {exportOpen ? <ExportDialog state={state} year={year} month={month} onClose={() => setExportOpen(false)} /> : null}
@@ -493,15 +501,26 @@ function ExportDialog({ state, year, month, onClose }: { state: AppState; year: 
 }
 
 function Dashboard({ state }: { state: AppState }) {
+  const [advisorsExpanded, setAdvisorsExpanded] = React.useState(false);
+  const [compactExpandedChart, setCompactExpandedChart] = React.useState(() => window.innerWidth <= 680);
   const branchChart = state.branches.slice(0, 8).map((branch: any) => ({
     ...branch,
     chartName: branchShortName(branch.name)
   }));
-  const advisorChart = state.advisors.slice(0, 10).map((advisor: any) => ({
+  const advisorChart = state.advisors.filter((advisor: any) => advisor.sales > 0).map((advisor: any) => ({
     ...advisor,
     chartName: advisorChartName(advisor.name),
     scoreText: `Score ${scoreValue(advisor.score)}`
   }));
+  const advisorChartHeight = Math.max(340, advisorChart.length * 34 + 28);
+  const advisorExpandedHeight = Math.max(460, advisorChart.length * 38 + 72);
+  React.useEffect(() => {
+    const query = window.matchMedia("(max-width: 680px)");
+    const update = () => setCompactExpandedChart(query.matches);
+    update();
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, []);
   return (
     <div className="view">
       <div className="kpi-grid">
@@ -534,22 +553,45 @@ function Dashboard({ state }: { state: AppState }) {
 
         <section className="panel">
           <div className="panel-title">
-            <h2>Top asesores</h2>
-            <Users size={18} />
+            <div>
+              <h2>Top asesores</h2>
+              <span>{advisorChart.length} asesores con ventas</span>
+            </div>
+            <div className="panel-title-actions">
+              <button className="icon-button" title="Ampliar top asesores" onClick={() => setAdvisorsExpanded(true)}>
+                <Maximize2 size={16} />
+              </button>
+              <Users size={18} />
+            </div>
           </div>
-          <ResponsiveContainer width="100%" height={340}>
-            <BarChart data={advisorChart} layout="vertical" margin={{ top: 6, left: 52, right: 78, bottom: 8 }}>
-              <CartesianGrid strokeDasharray="3 3" horizontal={false} />
-              <XAxis type="number" tickFormatter={compact} domain={[0, (dataMax: number) => Math.ceil(dataMax * 1.16)]} />
-              <YAxis dataKey="chartName" type="category" width={168} interval={0} tick={<AdvisorTick />} />
-              <Tooltip formatter={(value) => currency(Number(value))} labelFormatter={(_, payload) => advisorDisplayName(payload?.[0]?.payload?.name || "")} />
-              <Bar dataKey="sales" fill="#18715c" radius={[0, 4, 4, 0]}>
-                <LabelList dataKey="scoreText" position="right" fill="#202421" fontSize={11} />
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
+          <div className="chart-scroll top-advisors-scroll">
+            <div style={{ height: advisorChartHeight }}>
+              <AdvisorSalesChart data={advisorChart} />
+            </div>
+          </div>
         </section>
       </div>
+
+      {advisorsExpanded ? (
+        <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={() => setAdvisorsExpanded(false)}>
+          <section className="expanded-chart-dialog" onClick={(event) => event.stopPropagation()}>
+            <header>
+              <div>
+                <h2>Top asesores completo</h2>
+                <p>{advisorChart.length} asesores con ventas · {state.filters.selectedMonthName} {state.filters.selectedYear}</p>
+              </div>
+              <button className="icon-button" onClick={() => setAdvisorsExpanded(false)} title="Cerrar">X</button>
+            </header>
+            <div className="expanded-chart-body" style={{ height: advisorExpandedHeight }}>
+              <AdvisorSalesChart
+                data={advisorChart}
+                yAxisWidth={compactExpandedChart ? 160 : 220}
+                margin={compactExpandedChart ? { top: 6, left: 0, right: 58, bottom: 8 } : undefined}
+              />
+            </div>
+          </section>
+        </div>
+      ) : null}
 
       <section className="panel">
         <div className="panel-title">
@@ -754,6 +796,30 @@ function IntelligentGrowth({ state }: { state: AppState }) {
   );
 }
 
+function AdvisorSalesChart({
+  data,
+  yAxisWidth = 168,
+  margin = { top: 6, left: 52, right: 78, bottom: 8 }
+}: {
+  data: any[];
+  yAxisWidth?: number;
+  margin?: { top: number; left: number; right: number; bottom: number };
+}) {
+  return (
+    <ResponsiveContainer width="100%" height="100%">
+      <BarChart data={data} layout="vertical" margin={margin}>
+        <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+        <XAxis type="number" tickFormatter={compact} domain={[0, (dataMax: number) => Math.ceil(dataMax * 1.16)]} />
+        <YAxis dataKey="chartName" type="category" width={yAxisWidth} interval={0} tick={<AdvisorTick />} />
+        <Tooltip formatter={(value) => currency(Number(value))} labelFormatter={(_, payload) => advisorDisplayName(payload?.[0]?.payload?.name || "")} />
+        <Bar dataKey="sales" fill="#18715c" radius={[0, 4, 4, 0]} isAnimationActive={false}>
+          <LabelList dataKey="scoreText" position="right" fill="#202421" fontSize={11} />
+        </Bar>
+      </BarChart>
+    </ResponsiveContainer>
+  );
+}
+
 function Advisors({ state, year, month, onReload }: { state: AppState; year: number; month: number; onReload: () => Promise<void> }) {
   const [editing, setEditing] = React.useState<number | null>(null);
   const [quality, setQuality] = React.useState("");
@@ -911,70 +977,203 @@ function Branches({ state }: { state: AppState }) {
   );
 }
 
-function Marketing({ state, onReload }: { state: AppState; onReload: () => Promise<void> }) {
+function Marketing({ state, onReload, setNotice }: { state: AppState; onReload: () => Promise<void>; setNotice: (value: string) => void }) {
   const [title, setTitle] = React.useState("");
+  const [query, setQuery] = React.useState("");
+  const [syncing, setSyncing] = React.useState(false);
+  const activePlans = state.plans.filter((plan: any) => Number(plan.active ?? 1) === 1);
+  const filteredPlans = activePlans.filter((plan: any) => {
+    const haystack = normalizeText(`${plan.name} ${plan.category} ${plan.membership_type || ""} ${plan.duration_type || ""}`);
+    return !query.trim() || haystack.includes(normalizeText(query));
+  });
+  const plansWithSales = activePlans.filter((plan: any) => Number(plan.sales || 0) > 0);
+  const plansWithoutPrice = activePlans.filter((plan: any) => !Number(plan.cash_price || 0));
+  const evoPlans = activePlans.filter((plan: any) => String(plan.source || "").includes("EVO"));
+  const totalPlanSales = activePlans.reduce((sum: number, plan: any) => sum + Number(plan.sales || 0), 0);
+  const topPlans = activePlans.slice().sort((a: any, b: any) => Number(b.sales || 0) - Number(a.sales || 0)).slice(0, 8);
+  const categoryMix = Object.values(
+    activePlans.reduce((acc: Record<string, any>, plan: any) => {
+      const key = plan.category || "Plan";
+      acc[key] ||= { name: key, sales: 0, rows: 0 };
+      acc[key].sales += Number(plan.sales || 0);
+      acc[key].rows += Number(plan.rows || 0);
+      return acc;
+    }, {})
+  ).sort((a: any, b: any) => b.sales - a.sales);
+  const branchRevenuePlans = buildBranchRevenuePlans(state, activePlans);
+
   async function addCampaign() {
     if (!title.trim()) return;
     await fetch("/api/initiatives", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ area: "Marketing", type: "Campana", title, status: "Pendiente" })
+      body: JSON.stringify({ area: "Marketing", type: "Plan por sede", title, status: "Pendiente" })
     });
     setTitle("");
     await onReload();
   }
+
+  async function syncEvoPlans() {
+    setSyncing(true);
+    setNotice("Consultando planes activos en EVO...");
+    const res = await fetch("/api/evo/plans/sync", { method: "POST" });
+    const json = await res.json();
+    setSyncing(false);
+    if (!res.ok) throw new Error(json.error || "No se pudo consultar planes EVO");
+    setNotice(`EVO actualizo ${json.summary.rowsUpserted} planes y completo ${json.summary.pricesCompleted || 0} precios.`);
+    await onReload();
+  }
+
   return (
     <div className="view">
-      <div className="grid two">
-        <section className="panel">
-          <div className="panel-title"><h2>Planes y precios</h2><FileSpreadsheet size={18} /></div>
-          <div className="table-wrap small">
+      <div className="kpi-grid">
+        <Kpi label="Planes activos" value={String(activePlans.length)} sub={`${evoPlans.length} desde EVO`} />
+        <Kpi label="Con ventas mes" value={String(plansWithSales.length)} sub={currency(totalPlanSales)} tone="blue" />
+        <Kpi label="Sin precio EVO" value={String(plansWithoutPrice.length)} sub="se muestra prom. si vendió" tone="amber" />
+        <Kpi label="Planes por sede" value={String(branchRevenuePlans.length)} sub="acciones sugeridas" tone="red" />
+      </div>
+
+      <section className="panel marketing-command">
+        <div className="panel-title"><h2>Catalogo comercial y traccion</h2><FileSpreadsheet size={18} /></div>
+        <div className="catalog-toolbar">
+          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar plan, categoria o duracion" />
+          <button onClick={() => syncEvoPlans().catch((error) => setNotice(error.message))} disabled={syncing || state.settings.evo_api_key_configured !== "true"}>
+            <RefreshCcw size={16} />
+            <span>{syncing ? "Consultando" : "Consultar EVO"}</span>
+          </button>
+        </div>
+        <div className="grid two marketing-grid">
+          <div className="table-wrap small plan-catalog-table">
             <table>
-              <thead><tr><th>Plan</th><th>Categoria</th><th>Precio</th><th>Ventas</th></tr></thead>
+              <thead><tr><th>Plan</th><th>Precio</th><th>Venta</th><th>Traccion</th></tr></thead>
               <tbody>
-                {state.plans.slice(0, 20).map((plan: any) => (
+                {filteredPlans.map((plan: any) => (
                   <tr key={plan.id}>
-                    <td>{plan.name}</td>
-                    <td>{plan.category}</td>
-                    <td>{plan.cash_price ? currency(plan.cash_price) : "-"}</td>
-                    <td>{currency(plan.sales)}</td>
+                    <td>
+                      <strong>{plan.name}</strong>
+                      <small>{plan.category}{plan.duration ? ` · ${plan.duration} ${plan.duration_type || ""}` : ""}</small>
+                    </td>
+                    <td>
+                      {plan.cash_price ? compactCurrency(plan.cash_price) : plan.avg_ticket ? compactCurrency(plan.avg_ticket) : "-"}
+                      {!plan.cash_price && plan.avg_ticket ? <small>prom.</small> : null}
+                    </td>
+                    <td>{compactCurrency(plan.sales)}</td>
+                    <td>{plan.rows} · {plan.branch_count || 0} sedes</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-        </section>
-        <section className="panel">
-          <div className="panel-title"><h2>Indicadores de mercadeo</h2><LineChart size={18} /></div>
-          <ResponsiveContainer width="100%" height={280}>
-            <ReLineChart data={state.monthlySales}>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} />
-              <XAxis dataKey="label" />
-              <YAxis tickFormatter={compact} />
-              <Tooltip formatter={(value) => currency(Number(value))} />
-              <Line type="monotone" dataKey="sales" stroke="#18715c" strokeWidth={3} dot={{ r: 3 }} />
-            </ReLineChart>
-          </ResponsiveContainer>
-        </section>
-      </div>
-      <section className="panel">
-        <div className="panel-title"><h2>Campañas y estrategias</h2><Megaphone size={18} /></div>
+          <div className="marketing-side">
+            <div className="chart-card">
+              <h3>Top planes del mes</h3>
+              <ResponsiveContainer width="100%" height={260}>
+                <BarChart data={topPlans} layout="vertical" margin={{ top: 4, right: 16, bottom: 4, left: 82 }}>
+                  <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                  <XAxis type="number" tickFormatter={compact} />
+                  <YAxis type="category" dataKey="name" width={116} tick={{ fontSize: 11 }} />
+                  <Tooltip formatter={(value) => currency(Number(value))} />
+                  <Bar dataKey="sales" fill="#3467a7" radius={[0, 4, 4, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+            <div className="category-strip">
+              {categoryMix.slice(0, 6).map((item: any) => (
+                <article key={item.name}>
+                  <strong>{item.name}</strong>
+                  <span>{currency(item.sales)}</span>
+                  <small>{item.rows} ventas</small>
+                </article>
+              ))}
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="panel branch-plan-panel">
+        <div className="panel-title"><h2>Planes por sede para aumentar facturación</h2><Megaphone size={18} /></div>
         <div className="add-row">
-          <input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Nueva campaña" />
+          <input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Nuevo plan comercial por sede" />
           <button onClick={addCampaign}>Crear</button>
         </div>
-        <div className="initiative-list">
-          {state.marketing.length ? state.marketing.slice(0, 24).map((item: any) => (
-            <article key={item.id} className="initiative">
-              <strong>{item.title}</strong>
-              <span>{displayStatus(item.status)}</span>
-              <small>{item.channel || item.type}</small>
+        <div className="branch-plan-list">
+          {branchRevenuePlans.length ? branchRevenuePlans.map((item: any) => (
+            <article key={`${item.branchId}-${item.planId}`} className="branch-plan-card">
+              <header>
+                <div>
+                  <span>{item.branchName}</span>
+                  <strong>{item.title}</strong>
+                </div>
+                <b>{currency(item.impact)}</b>
+              </header>
+              <div className="branch-plan-metrics">
+                <small>Plan sugerido: <strong>{item.planName}</strong></small>
+                <small>Objetivo: <strong>{item.units} ventas</strong></small>
+                <small>Avance sede: <strong>{percent(item.progress)}</strong></small>
+              </div>
+              <p>{item.reason}</p>
+              <footer>
+                <span>{item.owner}</span>
+                <span>{item.currentRows} ventas actuales del plan en esta sede</span>
+              </footer>
             </article>
           )) : <Empty />}
         </div>
       </section>
     </div>
   );
+}
+
+function buildBranchRevenuePlans(state: AppState, activePlans: any[]) {
+  const candidates = activePlans
+    .filter((plan: any) => Number(plan.sales || 0) > 0 && (Number(plan.cash_price || 0) > 0 || Number(plan.avg_ticket || 0) > 0))
+    .slice()
+    .sort((a: any, b: any) => Number(b.sales || 0) - Number(a.sales || 0));
+  if (!candidates.length) return [];
+
+  return state.branches
+    .filter((branch: any) => Number(branch.sales || 0) > 0 || branch.target)
+    .map((branch: any) => {
+      const mix = Array.isArray(branch.planMix) ? branch.planMix : [];
+      const currentPlanIds = new Set(mix.slice(0, 5).map((plan: any) => Number(plan.planId)));
+      const plan =
+        candidates.find((candidate: any) => !currentPlanIds.has(Number(candidate.id))) ||
+        candidates.find((candidate: any) => Number(candidate.rows || 0) >= 3) ||
+        candidates[0];
+      const branchPlan = mix.find((item: any) => Number(item.planId) === Number(plan.id));
+      const price = Number(plan.cash_price || plan.avg_ticket || state.kpis.avgTicket || 0);
+      const target = Number(branch.target?.meta1 || 0);
+      const gap = Math.max(target - Number(branch.sales || 0), 0);
+      const baseImpact = gap > 0 ? Math.min(Math.max(gap * 0.08, price * 3), price * 25, gap) : price * 5;
+      const units = Math.max(1, Math.ceil(baseImpact / Math.max(price, 1)));
+      const impact = units * price;
+      const progress = Number(branch.score?.progressMeta1 || 0);
+      const ownerAdvisor = state.advisors
+        .filter((advisor: any) => Number(advisor.branchId) === Number(branch.id))
+        .slice()
+        .sort((a: any, b: any) => Number(b.sales || 0) - Number(a.sales || 0))[0];
+      const currentRows = Number(branchPlan?.rows || 0);
+      const currentSales = Number(branchPlan?.sales || 0);
+      const reason = currentRows > 0
+        ? `${plan.name} ya vendio ${currency(currentSales)} en ${branch.name}, pero puede ganar peso: el plan mueve ${currency(plan.sales)} a nivel plataforma y la sede tiene una brecha de ${currency(gap)} contra meta.`
+        : `${plan.name} tiene traccion en la plataforma (${currency(plan.sales)} y ${plan.rows} ventas), pero casi no aparece en ${branch.name}. Es una oportunidad concreta para cubrir ${currency(gap)} de brecha sin depender de descuentos.`;
+
+      return {
+        branchId: branch.id,
+        branchName: branch.name,
+        planId: plan.id,
+        planName: plan.name,
+        title: `Implementar ${plan.name}`,
+        units,
+        impact,
+        progress,
+        currentRows,
+        owner: ownerAdvisor ? `Responsable sugerido: ${advisorDisplayName(ownerAdvisor.name)}` : "Responsable sugerido: jefe de sede",
+        reason
+      };
+    })
+    .sort((a: any, b: any) => b.impact - a.impact)
+    .slice(0, 12);
 }
 
 function BoardReports({ state, year, month }: { state: AppState; year: number; month: number }) {
@@ -1000,26 +1199,55 @@ function BoardReports({ state, year, month }: { state: AppState; year: number; m
     };
   }, [year, month]);
 
+  const boardReports = state.boardReports || {};
   const model = report || {
     state,
     monthlyTrend: [],
-    annualByBranch: state.boardReports.byBranch,
-    annualByAdvisor: state.boardReports.byAdvisor,
-    annualByPlan: state.boardReports.byPlan,
-    dailyTrend: state.boardReports.byDay,
-    topDays: []
+    annualByBranch: boardReports.byBranch || [],
+    annualByAdvisor: boardReports.byAdvisor || [],
+    annualByPlan: boardReports.byPlan || [],
+    dailyTrend: boardReports.byDay || [],
+    topDays: [],
+    weakDays: [],
+    monthlyInsights: {
+      monthProjection: {},
+      branchGoalRows: [],
+      advisorLevelDistribution: [],
+      planFamilyMix: [],
+      topPlansByBranch: [],
+      weekdayPerformance: [],
+      commissionSummary: {},
+      paymentMethods: state.paymentMethods || []
+    }
   };
-  const months = (model.monthlyTrend || []).filter((row: any) => Number(row.month) <= month);
+  const fallbackInsights = buildReportFallbackInsights(state, year, month);
+  const insights = model.monthlyInsights || {};
+  const monthProjection = hasRows([insights.monthProjection]) ? insights.monthProjection : fallbackInsights.monthProjection;
+  const branchGoalRows = hasRows(insights.branchGoalRows) ? insights.branchGoalRows : fallbackInsights.branchGoalRows;
+  const advisorLevelDistribution = hasRows(insights.advisorLevelDistribution) ? insights.advisorLevelDistribution : fallbackInsights.advisorLevelDistribution;
+  const planFamilyMix = hasRows(insights.planFamilyMix) ? insights.planFamilyMix : fallbackInsights.planFamilyMix;
+  const topPlansByBranch = hasRows(insights.topPlansByBranch) ? insights.topPlansByBranch : fallbackInsights.topPlansByBranch;
+  const weekdayPerformance = hasRows(insights.weekdayPerformance) ? insights.weekdayPerformance : fallbackInsights.weekdayPerformance;
+  const commissionSummary = hasRows([insights.commissionSummary]) ? insights.commissionSummary : fallbackInsights.commissionSummary;
+  const paymentMethods = hasRows(insights.paymentMethods) ? insights.paymentMethods : fallbackInsights.paymentMethods;
+  const dailyTrend = cleanRows(hasRows(model.dailyTrend) ? model.dailyTrend : boardReports.byDay);
+  const topDays = hasRows(model.topDays)
+    ? cleanRows(model.topDays)
+    : dailyTrend.slice().sort((a: any, b: any) => Number(b.sales || 0) - Number(a.sales || 0)).slice(0, 6);
+  const weakDays = hasRows(model.weakDays)
+    ? cleanRows(model.weakDays)
+    : fallbackInsights.weakDays;
+  const months = cleanRows(model.monthlyTrend).filter((row: any) => Number(row.month) <= month);
   const total = months.reduce((sum: number, row: any) => sum + Number(row.sales || 0), 0) || state.kpis.totalSales;
   const bestMonth = months.slice().sort((a: any, b: any) => Number(b.sales || 0) - Number(a.sales || 0))[0];
-  const branches = (model.annualByBranch || []).filter((row: any) => Number(row.sales || 0) > 0).slice(0, 8);
-  const advisors = (model.annualByAdvisor || []).filter((row: any) => Number(row.sales || 0) > 0);
+  const branches = cleanRows(model.annualByBranch).filter((row: any) => Number(row.sales || 0) > 0).slice(0, 8);
+  const advisors = cleanRows(model.annualByAdvisor).filter((row: any) => Number(row.sales || 0) > 0);
   const topAdvisorRows = advisors.slice(0, 18).map((row: any) => ({
     ...row,
     reportChartName: advisorChartName(row.name)
   }));
   const advisorChartHeight = Math.max(460, topAdvisorRows.length * 30);
-  const plans = (model.annualByPlan || []).filter((row: any) => Number(row.sales || 0) > 0);
+  const plans = cleanRows(model.annualByPlan).filter((row: any) => Number(row.sales || 0) > 0);
   const totalPlans = plans.reduce((sum: number, row: any) => sum + Number(row.sales || 0), 0);
 
   return (
@@ -1040,6 +1268,28 @@ function BoardReports({ state, year, month }: { state: AppState; year: number; m
       </section>
 
       <section className="report-page">
+        <h2>Pulso mensual y proyección de cierre</h2>
+        <div className="report-kpi-grid">
+          <article><span>Venta actual</span><strong>{currency(monthProjection.sales || 0)}</strong><small>{percent(monthProjection.progress || 0)} de Meta 1</small></article>
+          <article><span>Proyección cierre</span><strong>{currency(monthProjection.projectedClose || 0)}</strong><small>{percent(monthProjection.projectedProgress || 0)} proyectado</small></article>
+          <article><span>Brecha actual</span><strong>{currency(monthProjection.currentGap || 0)}</strong><small>{currency(monthProjection.requiredDaily || 0)} diario requerido</small></article>
+          <article><span>Comisiones / ventas</span><strong>{ratePercent(commissionSummary.commissionRate || 0)}</strong><small>{currency(commissionSummary.totalCommissions || 0)}</small></article>
+        </div>
+        <div className="report-chart-grid">
+          <ReportBar title="Sedes por avance a Meta 1" data={branchGoalRows.slice().sort((a: any, b: any) => Number(b.progress || 0) - Number(a.progress || 0))} dataKey="progress" labelKey="name" valueFormatter={percent} />
+          <ReportBar title="Distribución de asesores por nivel" data={advisorLevelDistribution} dataKey="advisors" labelKey="level" color="#2563eb" valueFormatter={(value) => String(Math.round(value))} />
+        </div>
+        <ReportTable rows={branchGoalRows} columns={[
+          { key: "name", label: "Sede" },
+          { key: "sales", label: "Venta mes", format: currency },
+          { key: "target", label: "Meta 1", format: currency },
+          { key: "progress", label: "Avance", format: percent },
+          { key: "gap", label: "Brecha", format: currency },
+          { key: "projectedClose", label: "Proy. cierre", format: currency }
+        ]} />
+      </section>
+
+      <section className="report-page">
         <h2>Sedes</h2>
         <ReportTable rows={branches} columns={[
           { key: "name", label: "Sede" },
@@ -1057,6 +1307,12 @@ function BoardReports({ state, year, month }: { state: AppState; year: number; m
       <section className="report-page">
         <h2>Asesores</h2>
         <h3>Asesores con ventas positivas: {advisors.length} | Venta sin asesor asignado: {currency(model.unassignedSales || 0)} | Venta SUPORTEEVO positiva: {currency(model.supportEvoSales || 0)}</h3>
+        <ReportTable rows={advisorLevelDistribution} columns={[
+          { key: "level", label: "Nivel" },
+          { key: "advisors", label: "Asesores" },
+          { key: "sales", label: "Venta", format: currency },
+          { key: "commissions", label: "Comisiones", format: currency }
+        ]} />
         <ReportBar title="Top asesores por venta acumulada" data={topAdvisorRows} dataKey="sales" labelKey="reportChartName" height={advisorChartHeight} labelWidth={210} />
         <ReportTable rows={advisors.slice(0, 24)} columns={[
           { key: "name", label: "Asesor" },
@@ -1070,14 +1326,27 @@ function BoardReports({ state, year, month }: { state: AppState; year: number; m
       <section className="report-page">
         <h2>Rendimiento Diario Mensual</h2>
         <div className="report-chart-grid">
-          <ReportChart title={`Rendimiento diario - ${state.filters.selectedMonthName}`} data={model.dailyTrend || []} dataKey="sales" labelKey="label" />
-          <ReportBar title="Dias de mayor facturacion" data={model.topDays || []} dataKey="sales" labelKey="label" />
+          <ReportChart title={`Rendimiento diario - ${state.filters.selectedMonthName}`} data={dailyTrend || []} dataKey="sales" labelKey="label" />
+          <ReportBar title="Dias de mayor facturacion" data={topDays || []} dataKey="sales" labelKey="label" />
+          <ReportBar title="Dias con menor facturacion" data={weakDays || []} dataKey="sales" labelKey="label" color="#d97706" />
+          <ReportBar title="Promedio por dia de semana" data={weekdayPerformance} dataKey="avgSales" labelKey="weekday" color="#7c3aed" />
         </div>
       </section>
 
       <section className="report-page">
         <h2>Rendimiento del Periodo de Planes</h2>
         <h3>Ingreso por planes: {currency(totalPlans)} | Planes con ventas: {plans.length} | Transacciones de planes: {plans.reduce((sum: number, row: any) => sum + Number(row.rows || 0), 0)}</h3>
+        <div className="report-chart-grid">
+          <ReportBar title="Mix mensual por familia de plan" data={planFamilyMix} dataKey="sales" labelKey="family" color="#147d72" />
+          <ReportBar title="Métodos de pago del mes" data={paymentMethods} dataKey="sales" labelKey="name" color="#2563eb" />
+        </div>
+        <ReportTable rows={topPlansByBranch} columns={[
+          { key: "branchName", label: "Sede" },
+          { key: "topRevenuePlan", label: "Plan mayor ingreso" },
+          { key: "topRevenueSales", label: "Ingreso", format: currency },
+          { key: "topVolumePlan", label: "Plan más vendido" },
+          { key: "topVolumeRows", label: "Ventas" }
+        ]} />
         <ReportTable rows={plans.slice(0, 32)} columns={[
           { key: "name", label: "Plan" },
           { key: "sales", label: "Dinero ingresado", format: currency },
@@ -1086,9 +1355,9 @@ function BoardReports({ state, year, month }: { state: AppState; year: number; m
           { key: "ticket", label: "Ticket prom.", value: (row: any) => currency(row.sales / Math.max(row.rows, 1)) },
           { key: "branchCount", label: "Sedes" }
         ]} />
-        <div className="report-chart-grid">
-          <ReportBar title="Top planes por dinero ingresado" data={plans.slice(0, 16)} dataKey="sales" labelKey="name" />
-          <ReportBar title="Top planes por transacciones" data={plans.slice().sort((a: any, b: any) => Number(b.rows || 0) - Number(a.rows || 0)).slice(0, 16)} dataKey="rows" labelKey="name" color="#2563eb" />
+        <div className="report-chart-grid plan-report-charts">
+          <ReportBar title="Top planes por dinero ingresado" data={plans.slice(0, 16)} dataKey="sales" labelKey="name" labelWidth={190} rowHeight={34} />
+          <ReportBar title="Top planes por transacciones" data={plans.slice().sort((a: any, b: any) => Number(b.rows || 0) - Number(a.rows || 0)).slice(0, 16)} dataKey="rows" labelKey="name" color="#2563eb" labelWidth={190} rowHeight={34} />
         </div>
       </section>
     </div>
@@ -1096,46 +1365,198 @@ function BoardReports({ state, year, month }: { state: AppState; year: number; m
 }
 
 function ReportChart({ title, data, dataKey, labelKey = "label" }: { title: string; data: any[]; dataKey: string; labelKey?: string }) {
+  const hasChartData = hasRows(data) && data.some((row) => Number(row?.[dataKey] || 0) > 0);
   return (
     <div className="report-chart">
       <h3>{title}</h3>
-      <ResponsiveContainer width="100%" height={300}>
-        <ReLineChart data={data}>
-          <CartesianGrid strokeDasharray="3 3" />
-          <XAxis dataKey={labelKey} />
-          <YAxis tickFormatter={(value) => compactCurrency(Number(value))} />
-          <Tooltip formatter={(value) => currency(Number(value))} />
-          <Line type="monotone" dataKey={dataKey} stroke="#2563eb" strokeWidth={3} dot />
-        </ReLineChart>
-      </ResponsiveContainer>
+      {hasChartData ? (
+        <ResponsiveContainer width="100%" height={300}>
+          <ReLineChart data={data}>
+            <CartesianGrid strokeDasharray="3 3" />
+            <XAxis dataKey={labelKey} />
+            <YAxis tickFormatter={(value) => compactCurrency(Number(value))} />
+            <Tooltip formatter={(value) => currency(Number(value))} />
+            <Line type="monotone" dataKey={dataKey} stroke="#2563eb" strokeWidth={3} dot />
+          </ReLineChart>
+        </ResponsiveContainer>
+      ) : <EmptyChart />}
     </div>
   );
 }
 
-function ReportBar({ title, data, dataKey, labelKey, color = "#147d72", height = 320, labelWidth = 140 }: { title: string; data: any[]; dataKey: string; labelKey: string; color?: string; height?: number; labelWidth?: number }) {
+function ReportBar({
+  title,
+  data,
+  dataKey,
+  labelKey,
+  color = "#147d72",
+  height,
+  labelWidth = 140,
+  rowHeight = 26
+  , valueFormatter
+}: {
+  title: string;
+  data: any[];
+  dataKey: string;
+  labelKey: string;
+  color?: string;
+  height?: number;
+  labelWidth?: number;
+  rowHeight?: number;
+  valueFormatter?: (value: number) => string;
+}) {
+  const chartHeight = height ?? Math.max(320, data.length * rowHeight + 56);
+  const formatValue = valueFormatter ?? ((value: number) => dataKey === "rows" ? String(value) : compactCurrency(value));
+  const hasChartData = hasRows(data) && data.some((row) => Number(row?.[dataKey] || 0) > 0);
   return (
     <div className="report-chart">
       <h3>{title}</h3>
-      <ResponsiveContainer width="100%" height={height}>
-        <BarChart data={data} layout="vertical" margin={{ top: 8, left: 8, right: 32, bottom: 12 }}>
-          <CartesianGrid strokeDasharray="3 3" />
-          <XAxis type="number" tickFormatter={(value) => compactCurrency(Number(value))} />
-          <YAxis type="category" dataKey={labelKey} width={labelWidth} interval={0} tickLine={false} tick={{ fontSize: 12 }} />
-          <Tooltip formatter={(value) => typeof value === "number" && dataKey !== "rows" ? currency(value) : value} />
-          <Bar dataKey={dataKey} fill={color} />
-        </BarChart>
-      </ResponsiveContainer>
+      {hasChartData ? (
+        <ResponsiveContainer width="100%" height={chartHeight}>
+          <BarChart data={data} layout="vertical" margin={{ top: 8, left: 8, right: 32, bottom: 12 }}>
+            <CartesianGrid strokeDasharray="3 3" />
+            <XAxis type="number" tickFormatter={(value) => formatValue(Number(value))} />
+            <YAxis type="category" dataKey={labelKey} width={labelWidth} interval={0} tickLine={false} tick={{ fontSize: 11 }} />
+            <Tooltip formatter={(value) => typeof value === "number" ? formatValue(value) : value} />
+            <Bar dataKey={dataKey} fill={color} />
+          </BarChart>
+        </ResponsiveContainer>
+      ) : <EmptyChart height={Math.min(chartHeight, 320)} />}
     </div>
   );
+}
+
+function EmptyChart({ height = 300 }: { height?: number }) {
+  return (
+    <div className="empty-chart" style={{ minHeight: height }}>
+      Sin datos para graficar
+    </div>
+  );
+}
+
+function hasRows(value: any) {
+  return Array.isArray(value)
+    ? cleanRows(value).length > 0
+    : Boolean(value && typeof value === "object" && Object.values(value).some((item) => item !== undefined && item !== null && item !== 0 && item !== ""));
+}
+
+function cleanRows(value: any) {
+  return Array.isArray(value) ? value.filter((row) => row && typeof row === "object") : [];
+}
+
+function reportPlanFamily(name: string) {
+  const value = normalizeText(name);
+  if (value.includes("DUO")) return "Duo";
+  if (value.includes("CORPORATIVO")) return "Corporativo";
+  if (value.includes("HORA VALLE")) return "Hora valle";
+  if (value.includes("WEB")) return "Web";
+  if (value.includes("2 SESIONES")) return "Con sesiones";
+  if (value.includes("MES")) return "Mensual/base";
+  if (["TRIMESTRE", "BIMESTRE", "SEMESTRE", "ANUAL", "13 MESES", "14 MESES", "4 MESES", "5 MESES", "7 MESES"].some((token) => value.includes(token))) {
+    return "Duracion larga";
+  }
+  return "Otros";
+}
+
+function buildReportFallbackInsights(state: AppState, year: number, month: number) {
+  const dailyRows = cleanRows(state.boardReports?.byDay || state.dailySales || []).filter((row: any) => Number(row.sales || 0) > 0);
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const lastSaleDay = Math.max(...dailyRows.map((row: any) => Number(row.day || row.label || 0)), 0);
+  const elapsedDays = Math.max(lastSaleDay || Math.min(new Date().getDate(), daysInMonth), 1);
+  const remainingDays = Math.max(daysInMonth - elapsedDays, 0);
+  const totalSales = Number(state.kpis?.totalSales || 0);
+  const totalTarget = Number(state.kpis?.totalTarget || 0);
+  const projectedClose = totalSales > 0 ? (totalSales / elapsedDays) * daysInMonth : 0;
+  const branchGoalRows = (state.branches || [])
+    .filter((branch: any) => branch.target)
+    .map((branch: any) => {
+      const sales = Number(branch.sales || 0);
+      const target = Number(branch.target?.meta1 || 0);
+      const projected = sales > 0 ? (sales / elapsedDays) * daysInMonth : 0;
+      return {
+        id: branch.id,
+        name: branch.name,
+        sales,
+        target,
+        gap: Math.max(target - sales, 0),
+        progress: target > 0 ? sales / target : 0,
+        projectedClose: projected
+      };
+    })
+    .sort((a: any, b: any) => Number(a.progress || 0) - Number(b.progress || 0));
+  const levelMap = new Map<string, any>();
+  for (const advisor of cleanRows(state.advisors)) {
+    const level = advisor.commission?.level || "Sin comision";
+    const row = levelMap.get(level) || { level, advisors: 0, sales: 0, commissions: 0 };
+    row.advisors += 1;
+    row.sales += Number(advisor.sales || 0);
+    row.commissions += Number(advisor.commission?.finalCommission || 0);
+    levelMap.set(level, row);
+  }
+  const levelOrder = ["Sin venta", "Sin comision", "Activacion", "Bronce", "Plata", "Meta 1", "Meta 2", "Meta 3", "Meta 4"];
+  const planMap = new Map<string, any>();
+  for (const plan of cleanRows(state.plans)) {
+    const sales = Number(plan.sales || 0);
+    const rows = Number(plan.rows || 0);
+    if (sales <= 0 && rows <= 0) continue;
+    const family = reportPlanFamily(plan.name);
+    const row = planMap.get(family) || { family, sales: 0, rows: 0, plans: 0 };
+    row.sales += sales;
+    row.rows += rows;
+    row.plans += 1;
+    planMap.set(family, row);
+  }
+  const weekdayLabels = ["Domingo", "Lunes", "Martes", "Miercoles", "Jueves", "Viernes", "Sabado"];
+  const weekdayMap = new Map<number, any>();
+  for (const row of dailyRows) {
+    const day = Number(row.day || row.label || 0);
+    if (!day) continue;
+    const index = new Date(year, month - 1, day).getDay();
+    const bucket = weekdayMap.get(index) || { weekday: weekdayLabels[index], sales: 0, rows: 0, activeDays: 0 };
+    bucket.sales += Number(row.sales || 0);
+    bucket.rows += Number(row.rows || 0);
+    bucket.activeDays += 1;
+    weekdayMap.set(index, bucket);
+  }
+  const weekdayPerformance = Array.from(weekdayMap.values()).map((row: any) => ({
+    ...row,
+    avgSales: row.activeDays > 0 ? row.sales / row.activeDays : 0,
+    avgRows: row.activeDays > 0 ? row.rows / row.activeDays : 0
+  }));
+  return {
+    monthProjection: {
+      sales: totalSales,
+      target: totalTarget,
+      progress: totalTarget > 0 ? totalSales / totalTarget : 0,
+      projectedClose,
+      projectedProgress: totalTarget > 0 ? projectedClose / totalTarget : 0,
+      currentGap: Math.max(totalTarget - totalSales, 0),
+      requiredDaily: remainingDays > 0 ? Math.max(totalTarget - totalSales, 0) / remainingDays : 0
+    },
+    branchGoalRows,
+    advisorLevelDistribution: Array.from(levelMap.values()).sort((a: any, b: any) => levelOrder.indexOf(a.level) - levelOrder.indexOf(b.level)),
+    planFamilyMix: Array.from(planMap.values()).sort((a: any, b: any) => b.sales - a.sales),
+    topPlansByBranch: [],
+    weekdayPerformance,
+    weakDays: dailyRows.slice().sort((a: any, b: any) => Number(a.sales || 0) - Number(b.sales || 0)).slice(0, 6),
+    commissionSummary: {
+      advisorCommissions: Number(state.kpis?.totalAdvisorCommissions || 0),
+      directorCommissions: Number(state.kpis?.totalDirectorCommissions || 0),
+      totalCommissions: Number(state.kpis?.totalAdvisorCommissions || 0) + Number(state.kpis?.totalDirectorCommissions || 0),
+      commissionRate: totalSales > 0 ? (Number(state.kpis?.totalAdvisorCommissions || 0) + Number(state.kpis?.totalDirectorCommissions || 0)) / totalSales : 0
+    },
+    paymentMethods: cleanRows(state.paymentMethods)
+  };
 }
 
 function ReportTable({ rows, columns }: { rows: any[]; columns: Array<{ key: string; label: string; format?: (value: number) => string; value?: (row: any) => React.ReactNode }> }) {
+  const safeRows = cleanRows(rows);
   return (
     <div className="report-table">
       <table>
         <thead><tr>{columns.map((col) => <th key={col.key}>{col.label}</th>)}</tr></thead>
         <tbody>
-          {rows.length ? rows.map((row, index) => (
+          {safeRows.length ? safeRows.map((row, index) => (
             <tr key={row.id ?? `${row.name || row.label}-${index}`}>
               {columns.map((col) => {
                 const raw = col.value ? col.value(row) : row[col.key];
@@ -1157,6 +1578,17 @@ function Direction({ state, year, month, onReload, setNotice }: { state: AppStat
   const requirements = directionItems.filter((item: any) => normalizeText(item.type).includes("REQUERIMIENTO"));
   const ideas = directionItems.filter((item: any) => normalizeText(item.type).includes("IDEA"));
   const directionPlans = directionItems.filter((item: any) => normalizeText(item.type).includes("PLAN"));
+  const focusBranches = state.branches
+    .filter((branch: any) => branch.target)
+    .slice()
+    .sort((a: any, b: any) => Number(a.score?.progressMeta1 || 0) - Number(b.score?.progressMeta1 || 0))
+    .slice(0, 4);
+  const focusAdvisors = state.advisors
+    .filter((advisor: any) => advisor.sales > 0)
+    .slice()
+    .sort((a: any, b: any) => Number(a.score?.score ?? 999) - Number(b.score?.score ?? 999))
+    .slice(0, 5);
+  const pendingDirectionItems = directionItems.filter((item: any) => displayStatus(item.status) !== "Hecho").length;
 
   async function askAi() {
     setAnswer("Pensando...");
@@ -1191,25 +1623,53 @@ function Direction({ state, year, month, onReload, setNotice }: { state: AppStat
   }
 
   return (
-    <div className="view">
-      <div className="grid two">
+    <div className="view direction-view">
+      <section className="panel direction-hero">
+        <div>
+          <span className="eyebrow">Foco directivo</span>
+          <h2>{state.filters.selectedMonthName} {state.filters.selectedYear}</h2>
+          <p>{state.commissionPolicy?.label}</p>
+        </div>
+        <div className="direction-hero-metrics">
+          <Kpi label="Venta total" value={currency(state.kpis.totalSales)} sub={percent(state.kpis.targetProgress)} />
+          <Kpi label="Comisiones" value={currency(state.kpis.totalAdvisorCommissions + state.kpis.totalDirectorCommissions)} sub="asesores + direccion" tone="blue" />
+          <Kpi label="Pendientes" value={String(pendingDirectionItems)} sub="requerimientos y planes" tone="amber" />
+        </div>
+      </section>
+
+      <div className="grid two direction-command-grid">
         <section className="panel">
-          <div className="panel-title"><h2>Comisiones</h2><Sparkles size={18} /></div>
-          <div className="metric-row"><span>Asesores</span><strong>{currency(state.kpis.totalAdvisorCommissions)}</strong></div>
-          <div className="metric-row"><span>Director</span><strong>{currency(state.kpis.totalDirectorCommissions)}</strong></div>
-          <div className="metric-row"><span>Venta total</span><strong>{currency(state.kpis.totalSales)}</strong></div>
-          <Progress value={state.kpis.targetProgress} />
-          <small className="muted-line">{state.commissionPolicy?.label}</small>
-          <div className="mini-list">
-            {state.branches.slice(0, 6).map((branch: any) => (
-              <div key={branch.id} className="metric-row">
-                <span>{branch.name}</span>
-                <strong>{currency(branch.directorCommission.bonus)}</strong>
-              </div>
+          <div className="panel-title"><h2>Sedes a intervenir</h2><Building2 size={18} /></div>
+          <div className="focus-list">
+            {focusBranches.map((branch: any) => (
+              <article key={branch.id}>
+                <div>
+                  <strong>{branch.name}</strong>
+                  <span>{currency(branch.sales)} de {currency(branch.target.meta1)}</span>
+                </div>
+                <strong>{percent(branch.score.progressMeta1)}</strong>
+                <Progress value={branch.score.progressMeta1} />
+              </article>
             ))}
           </div>
         </section>
         <section className="panel">
+          <div className="panel-title"><h2>Asesores para seguimiento</h2><Users size={18} /></div>
+          <div className="focus-list compact">
+            {focusAdvisors.map((advisor: any) => (
+              <article key={advisor.id}>
+                <div>
+                  <strong>{advisorDisplayName(advisor.name)}</strong>
+                  <span>{advisor.branchName} · {currency(advisor.sales)}</span>
+                </div>
+                <span className={scoreClass(advisor.score?.status)}>{scoreValue(advisor.score)}</span>
+              </article>
+            ))}
+          </div>
+        </section>
+      </div>
+
+      <section className="panel">
           <div className="panel-title"><h2>Requerimientos, planes e ideas</h2><ClipboardList size={18} /></div>
           <div className="form-grid direction-form">
             <select value={draft.type} onChange={(event) => setDraft({ ...draft, type: event.target.value })}>
@@ -1226,8 +1686,7 @@ function Direction({ state, year, month, onReload, setNotice }: { state: AppStat
             <DirectionColumn title="Planes" items={directionPlans} fallback={state.plans.slice(0, 6).map((plan: any) => ({ id: `plan-${plan.id}`, title: plan.name, status: currency(plan.sales), type: plan.category }))} />
             <DirectionColumn title="Ideas" items={ideas} />
           </div>
-        </section>
-      </div>
+      </section>
       <section className="panel">
         <div className="panel-title"><h2>Planes comerciales con tracción</h2><FileSpreadsheet size={18} /></div>
         <div className="plan-strip">
@@ -1315,6 +1774,81 @@ function DirectionColumn({ title, items, fallback = [] }: { title: string; items
           <small>{item.type || item.owner || ""}</small>
         </article>
       )) : <Empty />}
+    </div>
+  );
+}
+
+function AiChat({ state, year, month, setNotice }: { state: AppState; year: number; month: number; setNotice: (value: string) => void }) {
+  const groqConfigured = state.settings.groq_api_key_configured === "true";
+  const [prompt, setPrompt] = React.useState("");
+  const [loading, setLoading] = React.useState(false);
+  const [messages, setMessages] = React.useState<Array<{ role: "user" | "assistant"; content: string }>>([
+    {
+      role: "assistant",
+      content: "Puedo responder sobre ventas, sedes, asesores, planes, campañas, crecimiento, tareas, calidad de datos, EVO e insights guardados."
+    }
+  ]);
+  const suggestions = [
+    "Que campañas de mercadeo tienen relación con los planes que mas venden?",
+    "Que sedes y asesores debo priorizar esta semana?",
+    "Resume oportunidades de crecimiento por plan con acciones concretas.",
+    "Que problemas de calidad de datos afectan el analisis?"
+  ];
+
+  async function ask(question = prompt) {
+    const text = question.trim();
+    if (!text || loading) return;
+    if (!groqConfigured) {
+      setNotice("Groq no esta configurado.");
+      return;
+    }
+    setPrompt("");
+    setLoading(true);
+    setMessages((current) => [...current, { role: "user", content: text }]);
+    const res = await fetch("/api/ai/ask", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt: text, year, month, mode: "chat" })
+    });
+    const json = await res.json();
+    setLoading(false);
+    if (!res.ok) {
+      const error = json.error || "Groq no pudo responder";
+      setMessages((current) => [...current, { role: "assistant", content: error }]);
+      return;
+    }
+    setMessages((current) => [...current, { role: "assistant", content: json.answer }]);
+  }
+
+  return (
+    <div className="view ai-chat-view">
+      <div className="kpi-grid">
+        <Kpi label="Ventas consultables" value={currency(state.kpis.totalSales)} sub={`${state.kpis.salesRows} registros`} />
+        <Kpi label="Campañas" value={String(state.marketing.length)} sub="mercadeo en contexto" tone="blue" />
+        <Kpi label="Planes" value={String(state.plans.length)} sub="catalogo + ventas" tone="amber" />
+        <Kpi label="Groq" value={groqConfigured ? "Activo" : "Pendiente"} sub="consulta de datos" tone="red" />
+      </div>
+      <section className="panel ai-chat-panel">
+        <div className="panel-title"><h2>Chat con Groq</h2><MessageCircle size={18} /></div>
+        <div className="chat-suggestions">
+          {suggestions.map((item) => (
+            <button key={item} onClick={() => ask(item)} disabled={loading || !groqConfigured}>{item}</button>
+          ))}
+        </div>
+        <div className="chat-log">
+          {messages.map((message, index) => (
+            <article key={`${message.role}-${index}`} className={`chat-message ${message.role}`}>
+              <span>{message.role === "user" ? "Tu" : "Groq"}</span>
+              <p>{message.content}</p>
+            </article>
+          ))}
+          {loading ? <article className="chat-message assistant"><span>Groq</span><p>Analizando la plataforma...</p></article> : null}
+        </div>
+        <div className="chat-input">
+          <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="Pregunta sobre cualquier dato de la plataforma..." />
+          <button onClick={() => ask()} disabled={loading || !prompt.trim() || !groqConfigured}>Enviar</button>
+        </div>
+      </section>
     </div>
   );
 }
@@ -1443,7 +1977,8 @@ const evaluationMultipliers = [
 const directorCommissionLevels = [
   { level: "Meta 1", condition: "La sede alcanza Meta 1", bonus: 100000 },
   { level: "Meta 2", condition: "La sede alcanza Meta 2", bonus: 200000 },
-  { level: "Meta 3", condition: "La sede alcanza Meta 3 o más", bonus: 500000 }
+  { level: "Meta 3", condition: "La sede alcanza Meta 3", bonus: 500000 },
+  { level: "Meta 4", condition: "La sede alcanza Meta 4", bonus: 700000 }
 ];
 
 function CommissionMechanics({ state }: { state: AppState }) {
@@ -1495,11 +2030,11 @@ function CommissionMechanics({ state }: { state: AppState }) {
 
       <div className="guide-block">
         <h3>3. Nuevo esquema desde julio 2026</h3>
-        <p>Desde julio, Meta 1 de sede se calibra con ventas reales recientes de la sede, no solo con la proyección oficial. Se usa el promedio de los dos meses previos con crecimiento exigente, y se protege un piso cuando junio fue fuerte para que la meta no quede demasiado fácil.</p>
-        <code>Meta 1 sede = mayor entre promedio real reciente x 1,08 y 90% de la venta del mes anterior</code>
-        <p>La Meta 1 del asesor se calibra con asesores productivos de la sede. Se exige crecimiento sobre el promedio, con piso contra el mejor resultado reciente y techo para que siga siendo realizable.</p>
-        <code>Meta 1 asesor = entre promedio productivo x 1,10, 90% del mejor asesor y máximo 115% del mejor asesor reciente</code>
-        <p>Meta 4 sigue siendo sobresaliente; la referencia principal de gestión diaria es Meta 1.</p>
+        <p>Desde julio, Meta 1 de sede usa la rampa oficial aprobada en el Informe Integrado de Junta Directiva. La plataforma conserva esa meta mensual por sede como referencia de liquidación.</p>
+        <code>Meta 1 sede = meta oficial del informe para la sede y el mes filtrado</code>
+        <p>La Meta 1 del asesor se calcula con una regla única: la meta oficial de la sede dividida entre los asesores activos definidos para esa sede en el informe. Online se mantiene con 2 asesores asumidos.</p>
+        <code>Meta 1 asesor = Meta 1 sede oficial / asesores activos del informe</code>
+        <p>Meta 4 sigue siendo sobresaliente; calidad y gestión se aplican como multiplicadores de la comisión final.</p>
       </div>
       <div className="table-wrap small">
         <table>
@@ -1521,7 +2056,7 @@ function CommissionMechanics({ state }: { state: AppState }) {
 
       <div className="guide-block">
         <h3>4. Composición de metas desde julio</h3>
-        <p>La sede y el asesor tienen metas recalibradas por separado. La sede parte de ventas reales recientes; el asesor parte del desempeño de asesores productivos. Desde cada Meta 1 se construyen niveles escalonados: 60%, 75%, 90%, 100%, 110%, 120% y 130%.</p>
+        <p>Desde cada Meta 1 oficial se construyen los niveles escalonados: 60%, 75%, 90%, 100%, 110%, 120% y 130%. Si cambia la dotación real, la sede conserva su meta mensual y se recalcula el promedio por asesor.</p>
         <code>Activación 60% · Bronce 75% · Plata 90% · Meta 1 100% · Meta 2 110% · Meta 3 120% · Meta 4 130%</code>
       </div>
 
@@ -1541,7 +2076,7 @@ function CommissionMechanics({ state }: { state: AppState }) {
 
       <div className="guide-block">
         <h3>6. Cómo se calculan tus comisiones como director</h3>
-        <p>Tu comisión se calcula por sede. Cada sede se evalúa contra sus metas del mes. Si una sede llega a Meta 1, Meta 2 o Meta 3, genera un bono fijo. El total del director es la suma de los bonos de todas las sedes.</p>
+        <p>Tu comisión se calcula por sede. Cada sede se evalúa contra sus metas del mes. Si una sede llega a Meta 1, Meta 2, Meta 3 o Meta 4, genera un bono fijo. El total del director es la suma de los bonos de todas las sedes.</p>
       </div>
       <div className="table-wrap small">
         <table>

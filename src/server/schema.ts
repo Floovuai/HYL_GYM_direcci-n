@@ -36,6 +36,14 @@ export async function migrate() {
       card_price REAL,
       cost_per_month REAL,
       source TEXT,
+      external_id TEXT,
+      membership_type TEXT,
+      duration_type TEXT,
+      duration INTEGER,
+      online_sales_url TEXT,
+      description TEXT,
+      external_sale_available INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       active INTEGER NOT NULL DEFAULT 1
     );
 
@@ -256,6 +264,16 @@ export async function migrate() {
   `);
 
   await ensureColumn("sales", "sale_key", "TEXT");
+  await ensureColumn("plans", "external_id", "TEXT");
+  await ensureColumn("plans", "membership_type", "TEXT");
+  await ensureColumn("plans", "duration_type", "TEXT");
+  await ensureColumn("plans", "duration", "INTEGER");
+  await ensureColumn("plans", "online_sales_url", "TEXT");
+  await ensureColumn("plans", "description", "TEXT");
+  await ensureColumn("plans", "external_sale_available", "INTEGER NOT NULL DEFAULT 0");
+  await ensureColumn("plans", "updated_at", "TEXT");
+  await run("UPDATE plans SET updated_at = COALESCE(updated_at, CURRENT_TIMESTAMP)");
+  await run("CREATE INDEX IF NOT EXISTS idx_plans_external ON plans(source, external_id)");
   await ensureColumn("import_batches", "duplicates_skipped", "INTEGER NOT NULL DEFAULT 0");
   await run("DROP INDEX IF EXISTS idx_sales_sale_key");
   await run(`

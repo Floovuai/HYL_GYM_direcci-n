@@ -332,15 +332,46 @@ export async function buildAppState(year?: number, month?: number) {
   const plans = await all<AnyRow>(
     `SELECT
       p.id, p.name, p.category, p.cash_price, p.card_price, p.cost_per_month,
+      p.source, p.active, p.external_id, p.membership_type, p.duration_type, p.duration,
+      p.online_sales_url, p.description, p.external_sale_available, p.updated_at,
       COALESCE(SUM(s.value), 0) sales,
-      COUNT(s.id) rows
+      COALESCE(AVG(NULLIF(s.value, 0)), 0) avg_ticket,
+      COUNT(s.id) rows,
+      COUNT(DISTINCT s.branch_id) branch_count
      FROM plans p
      LEFT JOIN sales s ON s.plan_id = p.id AND s.year = ? AND s.month = ?
      GROUP BY p.id
-     ORDER BY sales DESC, rows DESC, p.name
-     LIMIT 60`,
+     ORDER BY p.active DESC, sales DESC, rows DESC, p.name`,
     [selectedYear, selectedMonth]
   );
+
+  const branchPlanRows = await all<AnyRow>(
+    `SELECT
+       s.branch_id, p.id plan_id, p.name plan_name, p.category,
+       COALESCE(SUM(s.value), 0) sales,
+       COUNT(s.id) rows,
+       COALESCE(AVG(NULLIF(s.value, 0)), 0) avg_ticket
+     FROM sales s
+     LEFT JOIN plans p ON p.id = s.plan_id
+     WHERE s.year = ? AND s.month = ? AND s.branch_id IS NOT NULL AND p.id IS NOT NULL
+     GROUP BY s.branch_id, p.id
+     ORDER BY s.branch_id, sales DESC, rows DESC`,
+    [selectedYear, selectedMonth]
+  );
+  const branchPlanMix = new Map<number, AnyRow[]>();
+  for (const row of branchPlanRows) {
+    const branchId = Number(row.branch_id);
+    const bucket = branchPlanMix.get(branchId) ?? [];
+    bucket.push({
+      planId: Number(row.plan_id),
+      name: row.plan_name,
+      category: row.category,
+      sales: num(row.sales),
+      rows: num(row.rows),
+      avgTicket: num(row.avg_ticket)
+    });
+    branchPlanMix.set(branchId, bucket);
+  }
 
   const dailySalesRaw = await all<AnyRow>(
     `SELECT day, COALESCE(SUM(value), 0) sales, COUNT(*) rows
@@ -416,7 +447,10 @@ export async function buildAppState(year?: number, month?: number) {
   const quality = await buildQualityReport(selectedYear, selectedMonth);
   const recommendations = buildCommercialRecommendations({
     advisors,
-    branches,
+    branches: branches.map((branch) => ({
+      ...branch,
+      planMix: (branchPlanMix.get(branch.id) ?? []).slice(0, 12)
+    })),
     plans,
     kpis: {
       totalSales,
@@ -487,7 +521,12 @@ export async function buildAppState(year?: number, month?: number) {
         score: comparativeScore(sales, maxPlanSales, rows, maxPlanRows),
         cash_price: plan.cash_price === null ? null : num(plan.cash_price),
         card_price: plan.card_price === null ? null : num(plan.card_price),
-        cost_per_month: plan.cost_per_month === null ? null : num(plan.cost_per_month)
+        cost_per_month: plan.cost_per_month === null ? null : num(plan.cost_per_month),
+        avg_ticket: num(plan.avg_ticket),
+        active: Number(plan.active ?? 1),
+        duration: plan.duration === null ? null : num(plan.duration),
+        branch_count: num(plan.branch_count),
+        external_sale_available: num(plan.external_sale_available)
       };
     }),
     dailySales,
@@ -767,6 +806,154 @@ export async function buildManagerReport(year: number, month: number) {
     .slice()
     .sort((a: AnyRow, b: AnyRow) => num(b.sales) - num(a.sales))
     .slice(0, 6);
+  const weakDays = state.dailySales
+    .filter((row: AnyRow) => num(row.sales) > 0)
+    .slice()
+    .sort((a: AnyRow, b: AnyRow) => num(a.sales) - num(b.sales))
+    .slice(0, 6);
+  const daysInSelectedMonth = new Date(year, month, 0).getDate();
+  const lastSaleDay = Math.max(...state.dailySales.filter((row: AnyRow) => num(row.sales) > 0).map((row: AnyRow) => num(row.day)), 0);
+  const elapsedDays = Math.max(lastSaleDay || Math.min(new Date().getDate(), daysInSelectedMonth), 1);
+  const currentMonthSales = num(state.kpis.totalSales);
+  const currentMonthTarget = num(state.kpis.totalTarget);
+  const projectedClose = currentMonthSales > 0 ? (currentMonthSales / elapsedDays) * daysInSelectedMonth : 0;
+  const remainingDays = Math.max(daysInSelectedMonth - elapsedDays, 0);
+  const monthProjection = {
+    sales: currentMonthSales,
+    target: currentMonthTarget,
+    elapsedDays,
+    daysInMonth: daysInSelectedMonth,
+    remainingDays,
+    dailyAverage: currentMonthSales / elapsedDays,
+    projectedClose,
+    currentGap: Math.max(currentMonthTarget - currentMonthSales, 0),
+    projectedGap: currentMonthTarget ? currentMonthTarget - projectedClose : 0,
+    requiredDaily: remainingDays > 0 ? Math.max(currentMonthTarget - currentMonthSales, 0) / remainingDays : 0,
+    progress: currentMonthTarget > 0 ? currentMonthSales / currentMonthTarget : 0,
+    projectedProgress: currentMonthTarget > 0 ? projectedClose / currentMonthTarget : 0
+  };
+
+  const branchGoalRows = state.branches
+    .filter((branch: AnyRow) => branch.target)
+    .map((branch: AnyRow) => {
+      const sales = num(branch.sales);
+      const target = num(branch.target?.meta1);
+      const projected = sales > 0 ? (sales / elapsedDays) * daysInSelectedMonth : 0;
+      return {
+        id: Number(branch.id),
+        name: branch.name,
+        sales,
+        target,
+        gap: Math.max(target - sales, 0),
+        progress: target > 0 ? sales / target : 0,
+        projectedClose: projected,
+        projectedGap: target ? target - projected : 0,
+        requiredDaily: remainingDays > 0 ? Math.max(target - sales, 0) / remainingDays : 0,
+        score: branch.score,
+        directorCommission: branch.directorCommission
+      };
+    })
+    .sort((a: AnyRow, b: AnyRow) => num(a.progress) - num(b.progress));
+
+  const advisorLevelMap = new Map<string, { level: string; advisors: number; sales: number; commissions: number }>();
+  for (const advisor of state.advisors) {
+    const level = advisor.commission?.level ?? "Sin comision";
+    const bucket = advisorLevelMap.get(level) ?? { level, advisors: 0, sales: 0, commissions: 0 };
+    bucket.advisors += 1;
+    bucket.sales += num(advisor.sales);
+    bucket.commissions += num(advisor.commission?.finalCommission);
+    advisorLevelMap.set(level, bucket);
+  }
+  const levelOrder = ["Sin venta", "Sin comision", "Activacion", "Bronce", "Plata", "Meta 1", "Meta 2", "Meta 3", "Meta 4"];
+  const advisorLevelDistribution = Array.from(advisorLevelMap.values()).sort(
+    (a, b) => levelOrder.indexOf(a.level) - levelOrder.indexOf(b.level)
+  );
+
+  const planFamilyMap = new Map<string, { family: string; sales: number; rows: number; plans: number }>();
+  for (const plan of state.plans as AnyRow[]) {
+    const sales = num(plan.sales);
+    const rows = num(plan.rows);
+    if (sales <= 0 && rows <= 0) continue;
+    const family = planFamily(plan.name);
+    const bucket = planFamilyMap.get(family) ?? { family, sales: 0, rows: 0, plans: 0 };
+    bucket.sales += sales;
+    bucket.rows += rows;
+    bucket.plans += 1;
+    planFamilyMap.set(family, bucket);
+  }
+  const planFamilyMix = Array.from(planFamilyMap.values()).sort((a, b) => b.sales - a.sales);
+  const planFamilyTotal = planFamilyMix.reduce((sum, row) => sum + row.sales, 0);
+  for (const row of planFamilyMix) {
+    (row as AnyRow).share = planFamilyTotal > 0 ? row.sales / planFamilyTotal : 0;
+  }
+
+  const branchPlanCurrentRows = await all<AnyRow>(
+    `SELECT b.id branch_id, b.display_name branch_name, p.id plan_id, p.name plan_name,
+      COALESCE(SUM(s.value), 0) sales, COUNT(s.id) rows, COALESCE(AVG(NULLIF(s.value, 0)), 0) avg_ticket
+     FROM sales s
+     JOIN branches b ON b.id = s.branch_id
+     LEFT JOIN plans p ON p.id = s.plan_id
+     WHERE s.year = ? AND s.month = ? AND s.value > 0
+     GROUP BY b.id, p.id
+     ORDER BY b.display_name, sales DESC, rows DESC`,
+    [year, month]
+  );
+  const branchPlanBuckets = new Map<number, AnyRow[]>();
+  for (const row of branchPlanCurrentRows) {
+    const branchId = Number(row.branch_id);
+    const bucket = branchPlanBuckets.get(branchId) ?? [];
+    bucket.push({
+      branchId,
+      branchName: row.branch_name,
+      planId: Number(row.plan_id),
+      planName: row.plan_name ?? "Sin plan",
+      sales: num(row.sales),
+      rows: num(row.rows),
+      avgTicket: num(row.avg_ticket)
+    });
+    branchPlanBuckets.set(branchId, bucket);
+  }
+  const topPlansByBranch = Array.from(branchPlanBuckets.values()).map((bucket) => {
+    const topRevenue = bucket.slice().sort((a, b) => num(b.sales) - num(a.sales))[0];
+    const topRows = bucket.slice().sort((a, b) => num(b.rows) - num(a.rows))[0];
+    return {
+      branchId: topRevenue.branchId,
+      branchName: topRevenue.branchName,
+      topRevenuePlan: topRevenue.planName,
+      topRevenueSales: topRevenue.sales,
+      topRevenueRows: topRevenue.rows,
+      topVolumePlan: topRows.planName,
+      topVolumeRows: topRows.rows,
+      topVolumeSales: topRows.sales
+    };
+  });
+
+  const weekdayLabels = ["Domingo", "Lunes", "Martes", "Miercoles", "Jueves", "Viernes", "Sabado"];
+  const weekdayMap = new Map<number, { weekday: string; sales: number; rows: number; activeDays: number }>();
+  for (const row of state.dailySales) {
+    const day = num(row.day);
+    if (!day) continue;
+    const weekdayIndex = new Date(year, month - 1, day).getDay();
+    const bucket = weekdayMap.get(weekdayIndex) ?? { weekday: weekdayLabels[weekdayIndex], sales: 0, rows: 0, activeDays: 0 };
+    bucket.sales += num(row.sales);
+    bucket.rows += num(row.rows);
+    if (num(row.sales) > 0) bucket.activeDays += 1;
+    weekdayMap.set(weekdayIndex, bucket);
+  }
+  const weekdayPerformance = Array.from(weekdayMap.values()).map((row) => ({
+    ...row,
+    avgSales: row.activeDays > 0 ? row.sales / row.activeDays : 0,
+    avgRows: row.activeDays > 0 ? row.rows / row.activeDays : 0
+  }));
+
+  const commissionSummary = {
+    advisorCommissions: num(state.kpis.totalAdvisorCommissions),
+    directorCommissions: num(state.kpis.totalDirectorCommissions),
+    totalCommissions: num(state.kpis.totalAdvisorCommissions) + num(state.kpis.totalDirectorCommissions),
+    commissionRate: currentMonthSales > 0
+      ? (num(state.kpis.totalAdvisorCommissions) + num(state.kpis.totalDirectorCommissions)) / currentMonthSales
+      : 0
+  };
 
   return {
     state,
@@ -785,7 +972,18 @@ export async function buildManagerReport(year: number, month: number) {
     annualByPlan,
     unassignedSales: num(unassignedSales),
     supportEvoSales: num(supportEvoSales),
-    topDays
+    topDays,
+    weakDays,
+    monthlyInsights: {
+      monthProjection,
+      branchGoalRows,
+      advisorLevelDistribution,
+      planFamilyMix,
+      topPlansByBranch,
+      weekdayPerformance,
+      commissionSummary,
+      paymentMethods: state.paymentMethods
+    }
   };
 }
 

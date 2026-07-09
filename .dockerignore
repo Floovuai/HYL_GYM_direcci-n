@@ -4,6 +4,8 @@
 node_modules
 dist
 tmp
+output
+.claude
 uploads/*
 !uploads/.gitkeep
 data/*.db

@@ -24,6 +24,14 @@ Opcion Docker:
 docker compose up -d --build
 ```
 
+Antes de exponer la plataforma, configura credenciales en `.env`:
+
+```text
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=usa-una-contrasena-larga
+AUTH_SESSION_SECRET=usa-un-secreto-aleatorio-largo
+```
+
 Si el puerto `4310` ya esta ocupado en el PC:
 
 ```bash
@@ -65,14 +73,36 @@ data/hyl_gym.db
 
 La base usa SQLite nativo con `better-sqlite3`, WAL y transacciones directas.
 
-En Docker, `data/` y `uploads/` se montan como volumenes bind del proyecto:
+En Docker, `data/` y `uploads/` usan volumenes Docker nombrados:
 
 ```text
-./data:/app/data
-./uploads:/app/uploads
+hyl_data:/app/data
+hyl_uploads:/app/uploads
 ```
 
-Eso conserva la base y los archivos cargados aunque se reconstruya la imagen.
+Eso conserva la base y los archivos cargados aunque se reconstruya la imagen, y evita errores SQLite `SHMOPEN` comunes cuando la base vive en OneDrive o en bind mounts de Windows.
+
+Para pasar una base local existente al volumen Docker:
+
+```bash
+docker compose up -d --build
+docker cp data/hyl_gym.db hyl-gym-direccion:/app/data/hyl_gym.db
+docker compose restart
+```
+
+No publiques `data/*.db`, `.env`, `uploads/` ni reportes generados en GitHub.
+
+## Acceso publico seguro
+
+GitHub puede ser publico para el codigo, pero la plataforma no debe ejecutarse desde GitHub Pages porque necesita backend, SQLite, sesiones y APIs.
+
+Opciones recomendadas:
+
+- **Cloudflare Tunnel** desde el PC o servidor: entrega un link HTTPS sin abrir puertos del router. Es la opcion mas simple para entrar desde celular, tablet y otros PCs.
+- **VPS con Docker Compose + dominio + HTTPS**: mejor si quieres disponibilidad permanente.
+- **Render/Railway/Fly.io**: viable si agregas volumen persistente para SQLite o migras a una base gestionada.
+
+La app incluye login con cookie `httpOnly`, expiracion de sesion y limite basico de intentos. Para exponerla publicamente usa siempre HTTPS y una contraseña larga.
 
 ## Exportar PDF
 

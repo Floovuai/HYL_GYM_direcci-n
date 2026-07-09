@@ -56,11 +56,16 @@ export async function createManagerPdf(report: AnyRow, options: PdfReportOptions
   const months = monthRows(report, options.month);
 
   if (has("summary")) drawSummaryPage(doc, report, options, months);
+  if (has("monthly") || has("charts")) drawMonthlyInsightsPage(doc, report);
   if (has("branches") || has("charts")) drawBranchesPage(doc, report, options, months);
+  if (has("branches") || has("charts")) drawBranchGoalsPage(doc, report);
   if (has("advisors") || has("charts")) drawAdvisorsPages(doc, report, options);
+  if (has("advisors") || has("charts")) drawAdvisorLevelsPage(doc, report);
   if (has("daily")) drawDailyPage(doc, report, options);
+  if (has("daily") || has("charts")) drawDailyOpportunityPage(doc, report);
   if (has("plans")) drawPlanTablePages(doc, report, options);
   if (has("plans") || has("charts")) drawPlanChartsPage(doc, report, options);
+  if (has("plans") || has("charts")) drawPlanMixPage(doc, report);
   if (has("monthly")) drawMonthlyDetailPage(doc, report, options, months);
   if (has("annual") || has("scores")) drawScorePage(doc, report, options);
   if (has("quality") || has("recommendations")) drawQualityAndActionsPage(doc, report, options);
@@ -69,6 +74,202 @@ export async function createManagerPdf(report: AnyRow, options: PdfReportOptions
   drawFooters(doc);
   doc.end();
   return done;
+}
+
+function drawMonthlyInsightsPage(doc: PDFKit.PDFDocument, report: AnyRow) {
+  newPage(doc);
+  pageTitle(doc, "Pulso Mensual y Proyeccion", 36);
+  const projection = report.monthlyInsights?.monthProjection ?? {};
+  const commissions = report.monthlyInsights?.commissionSummary ?? {};
+  drawKpiCards(doc, [
+    ["Venta actual", money(projection.sales || 0), `${percent(projection.progress || 0)} de Meta 1`],
+    ["Proyeccion cierre", money(projection.projectedClose || 0), `${percent(projection.projectedProgress || 0)} proyectado`],
+    ["Brecha actual", money(projection.currentGap || 0), `${money(projection.requiredDaily || 0)} diario requerido`],
+    ["Comisiones / ventas", precisePercent(commissions.commissionRate || 0), money(commissions.totalCommissions || 0)]
+  ], 74, 92, 644);
+  drawTable(
+    doc,
+    ["Indicador", "Valor", "Lectura"],
+    [
+      ["Dias con venta", `${int(projection.elapsedDays || 0)} de ${int(projection.daysInMonth || 0)}`, "Base de proyeccion"],
+      ["Dias restantes", int(projection.remainingDays || 0), "Ventana para cierre"],
+      ["Promedio diario", money(projection.dailyAverage || 0), "Ritmo actual"],
+      ["Brecha proyectada", money(projection.projectedGap || 0), Number(projection.projectedGap || 0) <= 0 ? "Cierre sobre meta" : "Riesgo de cierre"]
+    ],
+    164,
+    198,
+    464,
+    [0.34, 0.22, 0.44]
+  );
+  const branchGoals = report.monthlyInsights?.branchGoalRows ?? [];
+  drawHorizontalBarChart(doc, {
+    title: "Avance a Meta 1 por sede",
+    x: 96,
+    y: 330,
+    width: 594,
+    height: 184,
+    data: branchGoals.slice().sort((a: AnyRow, b: AnyRow) => Number(b.progress || 0) - Number(a.progress || 0)).map((row: AnyRow) => ({
+      label: branchLabel(row.name),
+      value: Number(row.progress || 0)
+    })),
+    color: palette.teal,
+    valueFormatter: percent
+  });
+}
+
+function drawBranchGoalsPage(doc: PDFKit.PDFDocument, report: AnyRow) {
+  newPage(doc);
+  pageTitle(doc, "Metas Mensuales por Sede", 36);
+  const rows = report.monthlyInsights?.branchGoalRows ?? [];
+  drawTable(
+    doc,
+    ["Sede", "Venta mes", "Meta 1", "Avance", "Brecha", "Proy. cierre"],
+    rows.map((row: AnyRow) => [
+      branchLabel(row.name),
+      money(row.sales),
+      money(row.target),
+      percent(row.progress),
+      money(row.gap),
+      money(row.projectedClose)
+    ]),
+    72,
+    90,
+    650,
+    [0.2, 0.18, 0.18, 0.12, 0.16, 0.16],
+    16
+  );
+  drawHorizontalBarChart(doc, {
+    title: "Brecha para Meta 1",
+    x: 96,
+    y: 308,
+    width: 594,
+    height: 196,
+    data: rows.slice().sort((a: AnyRow, b: AnyRow) => Number(b.gap || 0) - Number(a.gap || 0)).map((row: AnyRow) => ({
+      label: branchLabel(row.name),
+      value: Number(row.gap || 0)
+    })),
+    color: palette.red,
+    valueFormatter: compactMoney
+  });
+}
+
+function drawAdvisorLevelsPage(doc: PDFKit.PDFDocument, report: AnyRow) {
+  newPage(doc);
+  pageTitle(doc, "Distribucion de Asesores por Nivel", 36);
+  const rows = report.monthlyInsights?.advisorLevelDistribution ?? [];
+  drawHorizontalBarChart(doc, {
+    title: "Cantidad de asesores por escalon",
+    x: 82,
+    y: 100,
+    width: 320,
+    height: 230,
+    data: rows.map((row: AnyRow) => ({ label: row.level, value: Number(row.advisors || 0) })),
+    color: palette.blue,
+    valueFormatter: int
+  });
+  drawHorizontalBarChart(doc, {
+    title: "Venta mensual por escalon",
+    x: 448,
+    y: 100,
+    width: 292,
+    height: 230,
+    data: rows.map((row: AnyRow) => ({ label: row.level, value: Number(row.sales || 0) })),
+    color: palette.teal,
+    valueFormatter: compactMoney
+  });
+  drawTable(
+    doc,
+    ["Nivel", "Asesores", "Venta", "Comisiones"],
+    rows.map((row: AnyRow) => [row.level, int(row.advisors), money(row.sales), money(row.commissions)]),
+    156,
+    376,
+    480,
+    [0.28, 0.18, 0.27, 0.27],
+    12
+  );
+}
+
+function drawDailyOpportunityPage(doc: PDFKit.PDFDocument, report: AnyRow) {
+  newPage(doc);
+  pageTitle(doc, "Dias Fuertes y Debiles", 36);
+  drawHorizontalBarChart(doc, {
+    title: "Dias con menor facturacion",
+    x: 82,
+    y: 104,
+    width: 300,
+    height: 210,
+    data: (report.weakDays || []).map((row: AnyRow) => ({ label: row.label, value: row.sales })),
+    color: palette.amber,
+    valueFormatter: compactMoney
+  });
+  drawHorizontalBarChart(doc, {
+    title: "Promedio por dia de semana",
+    x: 448,
+    y: 104,
+    width: 292,
+    height: 210,
+    data: (report.monthlyInsights?.weekdayPerformance || []).map((row: AnyRow) => ({ label: row.weekday, value: row.avgSales })),
+    color: palette.purple,
+    valueFormatter: compactMoney
+  });
+  drawTable(
+    doc,
+    ["Dia semana", "Promedio venta", "Transacciones prom.", "Dias activos"],
+    (report.monthlyInsights?.weekdayPerformance || []).map((row: AnyRow) => [
+      row.weekday,
+      money(row.avgSales),
+      int(row.avgRows),
+      int(row.activeDays)
+    ]),
+    140,
+    366,
+    520,
+    [0.28, 0.28, 0.24, 0.2],
+    10
+  );
+}
+
+function drawPlanMixPage(doc: PDFKit.PDFDocument, report: AnyRow) {
+  newPage(doc);
+  pageTitle(doc, "Mix de Planes y Producto por Sede", 36);
+  const mix = report.monthlyInsights?.planFamilyMix ?? [];
+  const topByBranch = report.monthlyInsights?.topPlansByBranch ?? [];
+  drawHorizontalBarChart(doc, {
+    title: "Mix mensual por familia de plan",
+    x: 82,
+    y: 96,
+    width: 300,
+    height: 220,
+    data: mix.map((row: AnyRow) => ({ label: row.family, value: row.sales })),
+    color: palette.teal,
+    valueFormatter: compactMoney
+  });
+  drawHorizontalBarChart(doc, {
+    title: "Metodos de pago",
+    x: 448,
+    y: 96,
+    width: 292,
+    height: 220,
+    data: (report.monthlyInsights?.paymentMethods || []).map((row: AnyRow) => ({ label: row.name || "Sin metodo", value: row.sales })),
+    color: palette.blue,
+    valueFormatter: compactMoney
+  });
+  drawTable(
+    doc,
+    ["Sede", "Plan mayor ingreso", "Ingreso", "Plan mas vendido", "Ventas"],
+    topByBranch.map((row: AnyRow) => [
+      branchLabel(row.branchName),
+      String(row.topRevenuePlan || "-").slice(0, 26),
+      money(row.topRevenueSales),
+      String(row.topVolumePlan || "-").slice(0, 26),
+      int(row.topVolumeRows)
+    ]),
+    64,
+    358,
+    664,
+    [0.16, 0.31, 0.15, 0.31, 0.07],
+    10
+  );
 }
 
 function drawSummaryPage(doc: PDFKit.PDFDocument, report: AnyRow, options: PdfReportOptions, months: AnyRow[]) {
@@ -246,7 +447,7 @@ function drawPlanChartsPage(doc: PDFKit.PDFDocument, report: AnyRow, _options: P
     y: 104,
     width: 300,
     height: 252,
-    data: plans.slice(0, 16).map((row: AnyRow) => ({ label: row.name, value: row.sales })),
+    data: plans.slice(0, 12).map((row: AnyRow) => ({ label: row.name, value: row.sales })),
     color: palette.teal,
     valueFormatter: compactMoney
   });
@@ -256,7 +457,7 @@ function drawPlanChartsPage(doc: PDFKit.PDFDocument, report: AnyRow, _options: P
     y: 104,
     width: 280,
     height: 252,
-    data: plans.slice().sort((a: AnyRow, b: AnyRow) => Number(b.rows || 0) - Number(a.rows || 0)).slice(0, 16).map((row: AnyRow) => ({ label: row.name, value: row.rows })),
+    data: plans.slice().sort((a: AnyRow, b: AnyRow) => Number(b.rows || 0) - Number(a.rows || 0)).slice(0, 12).map((row: AnyRow) => ({ label: row.name, value: row.rows })),
     color: palette.blue,
     valueFormatter: int
   });
@@ -403,6 +604,24 @@ function paragraph(doc: PDFKit.PDFDocument, text: string, x: number, y: number, 
   });
 }
 
+function drawKpiCards(doc: PDFKit.PDFDocument, cards: string[][], x: number, y: number, width: number) {
+  const gap = 10;
+  const cardWidth = (width - gap * (cards.length - 1)) / Math.max(cards.length, 1);
+  cards.forEach((card, index) => {
+    const px = x + index * (cardWidth + gap);
+    doc.roundedRect(px, y, cardWidth, 74, 6).fillAndStroke("#f7f9fb", palette.line);
+    doc.font("Helvetica").fontSize(7.2).fillColor(palette.muted).text(card[0] ?? "", px + 10, y + 11, {
+      width: cardWidth - 20
+    });
+    doc.font("Helvetica-Bold").fontSize(11).fillColor(palette.ink).text(card[1] ?? "", px + 10, y + 31, {
+      width: cardWidth - 20
+    });
+    doc.font("Helvetica").fontSize(7).fillColor(palette.muted).text(card[2] ?? "", px + 10, y + 54, {
+      width: cardWidth - 20
+    });
+  });
+}
+
 function drawTable(
   doc: PDFKit.PDFDocument,
   headers: string[],
@@ -451,8 +670,8 @@ function drawHorizontalBarChart(
   const labelWidth = Math.min(150, config.width * 0.38);
   const chartX = config.x + labelWidth;
   const chartWidth = config.width - labelWidth - 8;
-  const rowGap = 4;
-  const rowHeight = Math.max(7, Math.min(14, (config.height - rowGap * (data.length - 1)) / data.length));
+  const rowGap = 6;
+  const rowHeight = Math.max(11, Math.min(15, (config.height - rowGap * (data.length - 1) - 8) / data.length));
   const max = Math.max(...data.map((item) => Number(item.value || 0)), 1);
   doc.rect(chartX, config.y, chartWidth, config.height).strokeColor("#222222").lineWidth(0.7).stroke();
   for (let i = 0; i <= 4; i += 1) {
@@ -461,12 +680,13 @@ function drawHorizontalBarChart(
   }
   data.forEach((item, index) => {
     const rowY = config.y + index * (rowHeight + rowGap) + 4;
-    const label = String(item.label || "").slice(0, 34);
+    const label = String(item.label || "").slice(0, 28);
     const value = Number(item.value || 0);
-    doc.font("Helvetica").fontSize(6.5).fillColor("#111111").text(label, config.x, rowY - 1, {
+    doc.font("Helvetica").fontSize(6.2).fillColor("#111111").text(label, config.x, rowY - 1, {
       width: labelWidth - 6,
       align: "right",
-      height: rowHeight + 4
+      height: rowHeight + 2,
+      lineBreak: false
     });
     doc.rect(chartX, rowY, Math.max(1, (value / max) * (chartWidth - 8)), rowHeight).fill(config.color);
   });
@@ -568,7 +788,7 @@ function drawFooters(doc: PDFKit.PDFDocument) {
   const range = doc.bufferedPageRange();
   for (let i = range.start; i < range.start + range.count; i += 1) {
     doc.switchToPage(i);
-    doc.font("Helvetica").fontSize(7.5).fillColor(palette.muted).text(`Pagina ${i + 1}`, PAGE.width - 78, PAGE.height - 28, {
+    doc.font("Helvetica").fontSize(7.5).fillColor(palette.muted).text(`Pagina ${i + 1}`, PAGE.width - 78, PAGE.height - PAGE.margin - 10, {
       width: 52,
       align: "right"
     });
@@ -646,4 +866,8 @@ function int(value: number) {
 
 function percent(value: number) {
   return `${(Number(value || 0) * 100).toFixed(1)}%`;
+}
+
+function precisePercent(value: number) {
+  return `${(Number(value || 0) * 100).toFixed(2)}%`;
 }
