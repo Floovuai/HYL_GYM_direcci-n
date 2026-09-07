@@ -19,6 +19,11 @@ import {
 import { createManagerPdf } from "./pdfReport";
 import { advisorSalesHistory, buildAppState, buildManagerReport, buildQualityReport } from "./queries";
 import { normalizeKey } from "../shared/business";
+import { clientErrorMessage, httpError, platformErrorCode } from "./lib/http";
+import { currentBogotaPeriod, dateFromPeriod, monthDateRange } from "./lib/period";
+import { recordAppError } from "./lib/errors";
+import { publishRealtime, realtimeClients } from "./lib/realtime";
+import { integrationSettings, publicSettingRow } from "./lib/settings";
 
 loadLocalEnv();
 
@@ -45,7 +50,6 @@ function ensureExcelUpload(file?: Express.Multer.File): asserts file is Express.
   }
 }
 
-const EVO_DEFAULT_BASE_URL = "https://evo-integracao-api.w12app.com.br";
 const EVO_SALES_PATH = "/api/v2/sales";
 const EVO_ACTIVE_MEMBERS_PATH = "/api/v2/members/active-members";
 const EVO_CHECKINS_PATH = "/api/v1/management/aggregators/checkins/search";
@@ -56,7 +60,6 @@ const EVO_SALES_SYNC_INTERVAL_MS = Math.max(60_000, Number(process.env.EVO_SALES
 const EVO_CHECKINS_SYNC_INTERVAL_MS = Math.max(300_000, Number(process.env.EVO_CHECKINS_SYNC_INTERVAL_MS || 1_200_000));
 const EVO_ACTIVE_MEMBERS_SYNC_INTERVAL_MS = Math.max(900_000, Number(process.env.EVO_ACTIVE_MEMBERS_SYNC_INTERVAL_MS || 14_400_000));
 const EVO_SYNC_WORKER_ENABLED = process.env.EVO_SYNC_WORKER !== "0";
-const realtimeClients = new Set<express.Response>();
 const evoWorkerRunningBySource = new Set<string>();
 const evoPausedUntilBySource = new Map<string, number>();
 const EXPERIENCE_CACHE_TTL_MS = Math.max(60_000, Number(process.env.EXPERIENCE_CACHE_TTL_MS || 5 * 60_000));
@@ -355,126 +358,6 @@ app.use((req, res, next) => {
   }
   res.status(401).type("html").send(loginHtml());
 });
-
-function publishRealtime(event: string, payload: unknown) {
-  const body = `event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`;
-  for (const client of realtimeClients) {
-    client.write(body);
-  }
-}
-
-function publicSettingRow(row: { key: string; value: string; secret?: number; updated_at?: string }) {
-  const configured = row.secret
-    ? Boolean(row.value) ||
-      Boolean(row.key === "groq_api_key" && process.env.GROQ_API_KEY) ||
-      Boolean(row.key === "evo_api_key" && (process.env.EVO_API_KEY || process.env.EVO_SECRET_KEY))
-    : undefined;
-  return {
-    ...row,
-    value: row.secret
-      ? ""
-      : row.key === "evo_base_url" && process.env.EVO_BASE_URL
-        ? process.env.EVO_BASE_URL
-        : row.key === "evo_dns" && process.env.EVO_DNS
-          ? process.env.EVO_DNS
-          : row.value,
-    configured
-  };
-}
-
-function httpError(message: string, statusCode = 400, code = "DC-REQ-400") {
-  return Object.assign(new Error(message), { statusCode, code });
-}
-
-function platformErrorCode(error: unknown, statusCode: number) {
-  const explicit = (error as { code?: unknown })?.code;
-  if (typeof explicit === "string" && explicit.startsWith("DC-")) return explicit;
-  if (error instanceof multer.MulterError) return "DC-UPL-413";
-  if (statusCode === 401) return "DC-AUTH-401";
-  if (statusCode === 404) return "DC-REQ-404";
-  if (statusCode < 500) return "DC-REQ-400";
-  return "DC-SRV-500";
-}
-
-function clientErrorMessage(code: string) {
-  if (code.startsWith("DC-UPL")) return "No se pudo procesar el archivo cargado.";
-  if (code.startsWith("DC-EVO")) return "No se pudo conectar con EVO.";
-  if (code.startsWith("DC-GRQ")) return "No se pudo conectar con Groq.";
-  if (code.startsWith("DC-CFG")) return "No se pudo guardar la configuracion.";
-  if (code.startsWith("DC-DATA")) return "Hay datos comerciales que requieren revision.";
-  return "La plataforma encontro un error y lo registro para revision.";
-}
-
-async function recordAppError(input: {
-  code: string;
-  area: string;
-  userMessage: string;
-  technicalMessage: string;
-  method?: string;
-  path?: string;
-  statusCode?: number;
-  details?: unknown;
-}) {
-  try {
-    await run(
-      `INSERT INTO app_errors (code, area, user_message, technical_message, method, path, status_code, details)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        input.code,
-        input.area,
-        input.userMessage,
-        input.technicalMessage,
-        input.method ?? "",
-        input.path ?? "",
-        input.statusCode ?? 500,
-        JSON.stringify(input.details ?? {})
-      ]
-    );
-  } catch (logError) {
-    console.warn("No se pudo registrar app_error", logError);
-  }
-}
-
-async function integrationSettings() {
-  const rows = await all<{ key: string; value: string }>("SELECT key, value FROM settings");
-  const settings = Object.fromEntries(rows.map((row) => [row.key, row.value]));
-  return {
-    ...settings,
-    evo_base_url: String(process.env.EVO_BASE_URL || settings.evo_base_url || EVO_DEFAULT_BASE_URL).trim(),
-    evo_dns: String(process.env.EVO_DNS || settings.evo_dns || "").trim(),
-    evo_api_key: String(process.env.EVO_API_KEY || process.env.EVO_SECRET_KEY || settings.evo_api_key || "").trim(),
-    groq_api_key: String(process.env.GROQ_API_KEY || settings.groq_api_key || "").trim(),
-    groq_model: String(process.env.GROQ_MODEL || settings.groq_model || "openai/gpt-oss-120b").trim()
-  };
-}
-
-function currentBogotaPeriod() {
-  const formatter = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/Bogota",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit"
-  });
-  const parts = Object.fromEntries(formatter.formatToParts(new Date()).map((part) => [part.type, part.value]));
-  return {
-    year: Number(parts.year),
-    month: Number(parts.month),
-    day: Number(parts.day)
-  };
-}
-
-function monthDateRange(year: number, month: number) {
-  const start = `${year}-${String(month).padStart(2, "0")}-01`;
-  const endDate = new Date(Date.UTC(year, month, 0));
-  return {
-    start,
-    end: `${year}-${String(month).padStart(2, "0")}-${String(endDate.getUTCDate()).padStart(2, "0")}`
-  };
-}
-
-function dateFromPeriod(year: number, month: number, day: number) {
-  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-}
 
 function evoSalesUrl(baseUrl: string, year: number, month: number, skip: number, day?: number) {
   const normalizedBase = baseUrl.match(/^https?:\/\//i) ? baseUrl : `https://${baseUrl}`;
