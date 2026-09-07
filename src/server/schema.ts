@@ -1,10 +1,91 @@
-import { all, exec, run, saveDb } from "./db";
+import { all, exec, get, run, saveDb } from "./db";
 
 async function ensureColumn(table: string, column: string, definition: string) {
   const columns = await all<{ name: string }>(`PRAGMA table_info(${table})`);
   if (!columns.some((item) => item.name === column)) {
     await run(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
   }
+}
+
+async function migrateMemberEvolutionDaily() {
+  const table = await get<{ sql: string }>("SELECT sql FROM sqlite_master WHERE type='table' AND name='member_evolution'");
+  const columns = await all<{ name: string }>("PRAGMA table_info(member_evolution)");
+  const hasDay = columns.some((item) => item.name === "day");
+  const hasCutoffDate = columns.some((item) => item.name === "cutoff_date");
+  const hasMonthlyUnique = Boolean(table?.sql?.includes("UNIQUE(year, month, branch_id)"));
+  if (hasDay && hasCutoffDate && !hasMonthlyUnique) {
+    await run("DROP INDEX IF EXISTS idx_member_evolution_period");
+    await run("DROP INDEX IF EXISTS idx_member_evolution_branch_period");
+    await run("CREATE INDEX IF NOT EXISTS idx_member_evolution_period ON member_evolution(year, month, day)");
+    await run("CREATE INDEX IF NOT EXISTS idx_member_evolution_branch_period ON member_evolution(branch_id, year, month, day)");
+    return;
+  }
+
+  await exec(`
+    CREATE TABLE IF NOT EXISTS member_evolution_daily_migration (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      year INTEGER NOT NULL,
+      month INTEGER NOT NULL,
+      day INTEGER NOT NULL DEFAULT 0,
+      cutoff_date TEXT,
+      branch_id INTEGER NOT NULL REFERENCES branches(id),
+      active_start INTEGER NOT NULL DEFAULT 0,
+      new_members INTEGER NOT NULL DEFAULT 0,
+      renewed INTEGER NOT NULL DEFAULT 0,
+      reinscriptions INTEGER NOT NULL DEFAULT 0,
+      returned_from_suspension INTEGER NOT NULL DEFAULT 0,
+      total_entries INTEGER NOT NULL DEFAULT 0,
+      cancellations INTEGER NOT NULL DEFAULT 0,
+      expired INTEGER NOT NULL DEFAULT 0,
+      not_renewed INTEGER NOT NULL DEFAULT 0,
+      suspended INTEGER NOT NULL DEFAULT 0,
+      total_exits INTEGER NOT NULL DEFAULT 0,
+      active_end INTEGER NOT NULL DEFAULT 0,
+      net_evolution INTEGER NOT NULL DEFAULT 0,
+      net_evolution_rate REAL NOT NULL DEFAULT 0,
+      source_file TEXT,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(year, month, day, branch_id)
+    );
+
+    INSERT OR REPLACE INTO member_evolution_daily_migration (
+      id, year, month, day, cutoff_date, branch_id, active_start, new_members, renewed,
+      reinscriptions, returned_from_suspension, total_entries, cancellations, expired,
+      not_renewed, suspended, total_exits, active_end, net_evolution, net_evolution_rate,
+      source_file, updated_at
+    )
+    SELECT
+      id,
+      year,
+      month,
+      ${hasDay ? "COALESCE(day, 0)" : "0"},
+      ${hasCutoffDate ? "cutoff_date" : "NULL"},
+      branch_id,
+      active_start,
+      new_members,
+      renewed,
+      reinscriptions,
+      returned_from_suspension,
+      total_entries,
+      cancellations,
+      expired,
+      not_renewed,
+      suspended,
+      total_exits,
+      active_end,
+      net_evolution,
+      net_evolution_rate,
+      source_file,
+      updated_at
+    FROM member_evolution;
+
+    DROP TABLE member_evolution;
+    ALTER TABLE member_evolution_daily_migration RENAME TO member_evolution;
+  `);
+  await run("DROP INDEX IF EXISTS idx_member_evolution_period");
+  await run("DROP INDEX IF EXISTS idx_member_evolution_branch_period");
+  await run("CREATE INDEX IF NOT EXISTS idx_member_evolution_period ON member_evolution(year, month, day)");
+  await run("CREATE INDEX IF NOT EXISTS idx_member_evolution_branch_period ON member_evolution(branch_id, year, month, day)");
 }
 
 export async function migrate() {
@@ -15,7 +96,8 @@ export async function migrate() {
       name TEXT NOT NULL,
       display_name TEXT NOT NULL,
       active INTEGER NOT NULL DEFAULT 1,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
     CREATE TABLE IF NOT EXISTS advisors (
@@ -25,7 +107,10 @@ export async function migrate() {
       branch_id INTEGER REFERENCES branches(id),
       active INTEGER NOT NULL DEFAULT 1,
       excluded_from_commissions INTEGER NOT NULL DEFAULT 0,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      inactive_since TEXT,
+      inactive_reason TEXT DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
     CREATE TABLE IF NOT EXISTS plans (
@@ -83,6 +168,28 @@ export async function migrate() {
     CREATE INDEX IF NOT EXISTS idx_sales_sold_at ON sales(sold_at);
     CREATE INDEX IF NOT EXISTS idx_sales_source ON sales(source_type, source_key);
 
+    CREATE TABLE IF NOT EXISTS access_entries (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      source_type TEXT NOT NULL DEFAULT 'evo_checkins',
+      entry_key TEXT NOT NULL UNIQUE,
+      branch_id INTEGER REFERENCES branches(id),
+      member_external_id TEXT,
+      prospect_external_id TEXT,
+      product TEXT,
+      status TEXT,
+      aggregator TEXT,
+      checked_in_at TEXT NOT NULL,
+      year INTEGER NOT NULL,
+      month INTEGER NOT NULL,
+      day INTEGER NOT NULL,
+      hour INTEGER NOT NULL,
+      raw_json TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_access_entries_period ON access_entries(year, month, day, hour);
+    CREATE INDEX IF NOT EXISTS idx_access_entries_branch_period ON access_entries(branch_id, year, month, day);
+
     CREATE TABLE IF NOT EXISTS monthly_targets (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       year INTEGER NOT NULL,
@@ -127,6 +234,24 @@ export async function migrate() {
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UNIQUE(year, month, advisor_id)
     );
+
+    CREATE TABLE IF NOT EXISTS query_users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      username TEXT NOT NULL,
+      normalized_username TEXT NOT NULL UNIQUE,
+      role TEXT NOT NULL,
+      advisor_id INTEGER REFERENCES advisors(id),
+      branch_id INTEGER REFERENCES branches(id),
+      pin_hash TEXT NOT NULL,
+      pin_salt TEXT NOT NULL,
+      active INTEGER NOT NULL DEFAULT 1,
+      last_login_at TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_query_users_username ON query_users(normalized_username);
 
     CREATE TABLE IF NOT EXISTS commission_tiers (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -208,6 +333,32 @@ export async function migrate() {
 
     CREATE INDEX IF NOT EXISTS idx_metric_cache_period ON metric_cache(year, month);
 
+    CREATE TABLE IF NOT EXISTS member_evolution (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      year INTEGER NOT NULL,
+      month INTEGER NOT NULL,
+      day INTEGER NOT NULL DEFAULT 0,
+      cutoff_date TEXT,
+      branch_id INTEGER NOT NULL REFERENCES branches(id),
+      active_start INTEGER NOT NULL DEFAULT 0,
+      new_members INTEGER NOT NULL DEFAULT 0,
+      renewed INTEGER NOT NULL DEFAULT 0,
+      reinscriptions INTEGER NOT NULL DEFAULT 0,
+      returned_from_suspension INTEGER NOT NULL DEFAULT 0,
+      total_entries INTEGER NOT NULL DEFAULT 0,
+      cancellations INTEGER NOT NULL DEFAULT 0,
+      expired INTEGER NOT NULL DEFAULT 0,
+      not_renewed INTEGER NOT NULL DEFAULT 0,
+      suspended INTEGER NOT NULL DEFAULT 0,
+      total_exits INTEGER NOT NULL DEFAULT 0,
+      active_end INTEGER NOT NULL DEFAULT 0,
+      net_evolution INTEGER NOT NULL DEFAULT 0,
+      net_evolution_rate REAL NOT NULL DEFAULT 0,
+      source_file TEXT,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(year, month, day, branch_id)
+    );
+
     CREATE TABLE IF NOT EXISTS evo_sync_checkpoints (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       source TEXT NOT NULL DEFAULT 'evo',
@@ -250,6 +401,37 @@ export async function migrate() {
 
     CREATE INDEX IF NOT EXISTS idx_ai_insights_period ON ai_insights(year, month, created_at);
 
+    CREATE TABLE IF NOT EXISTS competitors (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      brand TEXT DEFAULT '',
+      zone TEXT NOT NULL DEFAULT '',
+      branch_id INTEGER REFERENCES branches(id),
+      segment TEXT DEFAULT 'Low cost',
+      address TEXT DEFAULT '',
+      notes TEXT DEFAULT '',
+      active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS competitor_snapshots (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      competitor_id INTEGER NOT NULL REFERENCES competitors(id),
+      year INTEGER NOT NULL,
+      month INTEGER NOT NULL,
+      monthly_price REAL,
+      enrollment_fee REAL,
+      promo TEXT DEFAULT '',
+      services TEXT DEFAULT '',
+      source TEXT DEFAULT '',
+      notes TEXT DEFAULT '',
+      captured_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(competitor_id, year, month)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_competitor_snapshots_period ON competitor_snapshots(year, month);
+    CREATE INDEX IF NOT EXISTS idx_competitor_snapshots_competitor ON competitor_snapshots(competitor_id, year, month);
+
     CREATE TABLE IF NOT EXISTS ai_actions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       insight_id INTEGER REFERENCES ai_insights(id),
@@ -261,8 +443,33 @@ export async function migrate() {
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
+
+    CREATE TABLE IF NOT EXISTS app_errors (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      code TEXT NOT NULL,
+      area TEXT NOT NULL DEFAULT 'platform',
+      user_message TEXT NOT NULL,
+      technical_message TEXT NOT NULL,
+      method TEXT DEFAULT '',
+      path TEXT DEFAULT '',
+      status_code INTEGER NOT NULL DEFAULT 500,
+      details TEXT DEFAULT '{}',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      resolved_at TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_app_errors_created ON app_errors(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_app_errors_code ON app_errors(code);
   `);
 
+  await migrateMemberEvolutionDaily();
+
+  await ensureColumn("branches", "updated_at", "TEXT");
+  await run("UPDATE branches SET updated_at = COALESCE(updated_at, created_at, CURRENT_TIMESTAMP)");
+  await ensureColumn("advisors", "inactive_since", "TEXT");
+  await ensureColumn("advisors", "inactive_reason", "TEXT DEFAULT ''");
+  await ensureColumn("advisors", "updated_at", "TEXT");
+  await run("UPDATE advisors SET updated_at = COALESCE(updated_at, created_at, CURRENT_TIMESTAMP)");
   await ensureColumn("sales", "sale_key", "TEXT");
   await ensureColumn("plans", "external_id", "TEXT");
   await ensureColumn("plans", "membership_type", "TEXT");
@@ -299,5 +506,26 @@ export async function migrate() {
     )
   `);
   await run("CREATE UNIQUE INDEX IF NOT EXISTS idx_sales_sale_key ON sales(sale_key) WHERE sale_key IS NOT NULL");
+  await run(`
+    UPDATE advisors
+    SET active = 0,
+        inactive_since = COALESCE(inactive_since, '2026-08-01'),
+        inactive_reason = COALESCE(NULLIF(inactive_reason, ''), 'Retirado antes de configurar DashCom'),
+        updated_at = CURRENT_TIMESTAMP
+    WHERE normalized_name IN (
+      'XIOMARA OCHOA',
+      'VALENTINA VARGAS',
+      'JEFERSON RODRIGUEZ',
+      'ANGELA VIVIANA GUTIERREZ GAMBOA',
+      'SARA VALENTINA MESA RODRIGUEZ'
+    )
+  `);
+  await run(`
+    UPDATE advisors
+    SET inactive_since = COALESCE(inactive_since, date('now')),
+        inactive_reason = COALESCE(NULLIF(inactive_reason, ''), 'Marcado inactivo antes de registrar fecha de corte'),
+        updated_at = CURRENT_TIMESTAMP
+    WHERE active = 0
+  `);
   await saveDb();
 }

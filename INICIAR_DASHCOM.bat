@@ -4,7 +4,7 @@ cd /d "%~dp0"
 
 echo.
 echo ==========================================
-echo  HYL Gym Direccion Comercial
+echo  DashCom - Dashboard Comercial
 echo ==========================================
 echo.
 
@@ -17,6 +17,15 @@ if errorlevel 1 (
 )
 
 set "NODE_OPTIONS=--use-system-ca"
+set "APP_PORT=4310"
+
+if exist ".env" (
+  for /f "usebackq tokens=1,* delims==" %%A in (".env") do (
+    if /i "%%A"=="PORT" set "APP_PORT=%%B"
+  )
+)
+
+set "APP_URL=http://localhost:%APP_PORT%"
 
 if not exist "node_modules" (
   echo Instalando dependencias...
@@ -33,8 +42,8 @@ if not exist "data\hyl_gym.db" (
   npm run seed
 )
 
-echo Abriendo http://localhost:4310 ...
-start "" cmd /c "timeout /t 4 >nul && start http://localhost:4310"
+echo Abriendo %APP_URL% ...
+start "" cmd /c "timeout /t 4 >nul && start %APP_URL%"
 npm run dev
 
 pause

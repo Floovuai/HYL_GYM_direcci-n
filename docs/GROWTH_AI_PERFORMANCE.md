@@ -1,8 +1,8 @@
-# Crecimiento, tiempo real e IA
+# Crecimiento, tiempo real e IA en DashCom
 
 ## Estado actual
 
-La plataforma ya calcula KPI comerciales, metas, comisiones, score, calidad de datos y el modulo `Crecimiento`.
+DashCom ya calcula KPI comerciales, metas, comisiones, score, calidad de datos y el modulo `Crecimiento`.
 
 El modulo de crecimiento usa datos existentes:
 
@@ -21,12 +21,14 @@ Esto permite retencion proxy, oportunidades por plan, simulaciones comerciales y
 - Worker EVO con checkpoint en `evo_sync_checkpoints`.
 - Canal SSE `/api/events` para refrescar UI cuando entran ventas.
 - Memoria IA con `ai_context_snapshots`, `ai_insights` y `ai_actions`.
+- Marca DashCom aplicada al asistente conversacional y a las recomendaciones del PDF.
 
 ## Limites actuales
 
 - El churn sigue siendo proxy de recompra porque faltan vencimientos reales y asistencia.
 - El worker EVO depende de la granularidad disponible en la API; hoy sincroniza por rango mensual e idempotencia de `sale_key`.
 - La IA ya tiene memoria consultable, pero aun no ejecuta acciones automaticamente sobre tareas/iniciativas sin confirmacion del usuario.
+- Las reglas de negocio y algunos identificadores tecnicos siguen siendo de la instalacion HYL; para producto comercial deben moverse a configuracion o datos iniciales por cliente.
 
 ## Plan para hacerla mas rapida
 

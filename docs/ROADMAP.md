@@ -1,4 +1,6 @@
-# Epicas, roadmap y tareas
+# Epicas, roadmap y tareas DashCom
+
+Este documento resume la evolucion funcional. Para el proceso de conversion comercial, instalador y version limpia, usar `docs/DASHCOM_ROADMAP.md` como guia principal.
 
 ## Epica 1: Fundacion comercial
 
@@ -6,6 +8,7 @@
 - Semilla desde Excel historico y comisiones 2026.
 - Normalizacion de sedes, asesores y planes.
 - Auditoria de importaciones.
+- Separacion progresiva entre producto DashCom y datos/reglas del cliente HYL.
 
 ## Epica 2: Operacion diaria
 
@@ -49,7 +52,7 @@
 
 ### Semana 2
 
-- Agregar autenticacion local.
+- Revisar autenticacion local existente y preparar roles.
 - Crear roles: Direccion, Mercadeo, Consulta.
 - Agregar bitacora de cambios por usuario.
 - Plantillas de PDF por perfil: junta, direccion y sede.
@@ -67,3 +70,11 @@
 - Backup automatico de SQLite.
 - Modo PWA para celular.
 - Manual operativo final.
+
+## Tareas de continuidad DashCom
+
+- Renombrar identificadores tecnicos heredados solo despues de backup y prueba de restauracion.
+- Parametrizar cliente, moneda, sedes, asesores, metas y comisiones.
+- Crear base demo/limpia para nuevos clientes.
+- Documentar formato aceptado de Excel por tipo de carga.
+- Mantener HYL como cliente de referencia, no como nombre del producto.

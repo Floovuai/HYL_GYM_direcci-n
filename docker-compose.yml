@@ -1,16 +1,16 @@
 services:
-  hyl-gym:
+  dashcom:
     build:
       context: .
       target: runtime
-    image: hyl-gym-direccion:local
-    container_name: hyl-gym-direccion
+    image: dashcom:local
+    container_name: dashcom
     restart: unless-stopped
     env_file:
       - .env
     environment:
       HOST: 0.0.0.0
-      PORT: 4310
+      PORT: ${PORT:-4310}
       DATABASE_PATH: /app/data/hyl_gym.db
       UPLOAD_DIR: /app/uploads
       ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
@@ -18,16 +18,27 @@ services:
       AUTH_SESSION_SECRET: ${AUTH_SESSION_SECRET:?Configura AUTH_SESSION_SECRET en .env}
       AUTH_SESSION_TTL_MS: ${AUTH_SESSION_TTL_MS:-43200000}
     ports:
-      - "${APP_PORT:-4310}:4310"
+      - "${PORT:-4310}:${PORT:-4310}"
     volumes:
       - hyl_data:/app/data
       - hyl_uploads:/app/uploads
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4310/api/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      test: ["CMD-SHELL", "node -e \"const port = process.env.PORT || 4310; fetch('http://127.0.0.1:' + port + '/api/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))\""]
       interval: 30s
       timeout: 10s
       start_period: 20s
       retries: 3
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: dashcom-cloudflared
+    restart: unless-stopped
+    profiles:
+      - cloudflare
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN:-}
+    depends_on:
+      dashcom:
+        condition: service_healthy
 
 volumes:
   hyl_data:

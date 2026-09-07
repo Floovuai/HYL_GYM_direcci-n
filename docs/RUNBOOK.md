@@ -1,4 +1,6 @@
-# Operacion local
+# Operacion local DashCom
+
+Este runbook describe la instalacion actual de DashCom. La app ya se presenta como DashCom, pero la base, el contenedor y algunos scripts internos conservan nombres `hyl_*` por compatibilidad con datos HYL Gym existentes.
 
 ## Instalar
 
@@ -12,7 +14,7 @@ npm install
 npm run db:reset
 ```
 
-Esto crea `data/hyl_gym.db` con ventas junio 2026, metas historicas enero-junio, metas julio-diciembre 2026, planes, precios, campanas y tareas iniciales.
+Esto crea `data/hyl_gym.db` con ventas junio 2026, metas historicas enero-junio, metas julio-diciembre 2026, planes, precios, campanas y tareas iniciales. El nombre `hyl_gym.db` es legado de la instalacion actual.
 
 ## Desarrollo
 
@@ -31,7 +33,7 @@ http://localhost:4310
 En Windows tambien puedes usar:
 
 ```bat
-INICIAR_HYL_GYM.bat
+INICIAR_DASHCOM.bat
 ```
 
 ## Celular en la misma red
@@ -74,22 +76,147 @@ docker compose ps
 docker compose logs -f hyl-gym
 ```
 
+El servicio Docker se llama `hyl-gym` y el contenedor `hyl-gym-direccion` por compatibilidad operativa. No cambiar esos nombres sin plan de migracion de volumenes, backups y scripts.
+
 Apagar:
 
 ```bash
 docker compose down
 ```
 
-La imagen ejecuta `npm run start:container`, sirve el cliente construido desde `dist/client` y mantiene persistencia con:
+La imagen ejecuta `npm run start:container`, sirve el cliente construido desde `dist/client` y mantiene persistencia con volumenes nombrados:
 
 ```text
-./data:/app/data
-./uploads:/app/uploads
+hyl_data:/app/data
+hyl_uploads:/app/uploads
 ```
 
 El contenedor expone `/api/health` como healthcheck interno.
 
 `docker compose config` es util para diagnostico local, pero expande el contenido de `.env`. No compartir esa salida cuando haya claves EVO o Groq configuradas.
+
+Si Docker es la instancia principal y necesitas correr `npm run dev`, sincroniza antes la base del volumen Docker hacia `./data`:
+
+```bash
+npm run db:sync:from-docker
+```
+
+Si el comando avisa que `data/hyl_gym.db` esta en uso, cierra `npm run dev` u otro proceso local que este usando SQLite y vuelve a ejecutarlo.
+
+## Cloudflare Tunnel
+
+Para abrir la misma instancia desde cualquier dispositivo con HTTPS:
+
+1. Crear un tunnel remoto en Cloudflare Zero Trust.
+2. Publicar el hostname hacia el servicio interno:
+
+```text
+http://hyl-gym:4310
+```
+
+3. Guardar el token en `.env`:
+
+```text
+CLOUDFLARE_TUNNEL_TOKEN=...
+```
+
+4. Levantar Docker con el perfil Cloudflare:
+
+```bash
+docker compose --profile cloudflare up -d --build
+```
+
+5. Verificar:
+
+```bash
+docker compose ps
+docker compose logs -f cloudflared
+```
+
+El servicio `cloudflared` es opcional y depende del healthcheck de `hyl-gym`.
+
+## GitHub y actualizacion continua
+
+Antes de cualquier cambio funcional, carga de datos masiva, ajuste de metas, comisiones, importadores o despliegue, crear un backup original:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\backup-platform.ps1 -Mode pre-update
+```
+
+Antes de subir cambios:
+
+```bash
+npm test
+npm run build
+docker compose build
+```
+
+Despues de validar y dejar la plataforma funcionando, crear un backup con las actualizaciones aplicadas:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\backup-platform.ps1 -Mode post-update
+```
+
+Despues:
+
+```bash
+git status
+git add .
+git commit -m "Descripcion corta del cambio"
+git push
+```
+
+GitHub Actions valida tests, build y construccion Docker. Para actualizar la instancia publicada por Cloudflare, reconstruir el compose en el PC o servidor que conserva los volumenes:
+
+```bash
+docker compose --profile cloudflare up -d --build
+```
+
+Guia completa: `docs/DEPLOYMENT_SYNC.md`.
+
+## Backups de la plataforma
+
+La plataforma debe conservar dos respaldos por cada mantenimiento o cambio importante:
+
+- **Backup original / pre-update**: estado exacto antes de modificar archivos, base de datos o configuracion operativa.
+- **Backup actualizado / post-update**: estado final despues de aplicar cambios, correr pruebas y reconstruir Docker.
+
+Comando para backup manual:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\backup-platform.ps1 -Mode manual
+```
+
+El backup queda en:
+
+```text
+backups/platform/
+```
+
+Cada paquete incluye:
+
+- `hyl_gym.local.db`, si existe `data/hyl_gym.db`.
+- `hyl_gym.docker.db`, si el contenedor `hyl-gym-direccion` esta activo.
+- `uploads-*.zip`, con archivos subidos.
+- `platform-source-*.zip`, con codigo, documentacion, scripts y configuracion no secreta.
+- `MANIFEST.txt`, con fecha, modo, estado Git y estado Docker.
+
+No incluir `.env` en backups compartidos. Ese archivo contiene secretos de login, EVO, Groq o tunel. Si se necesita recuperar en otro equipo, guardar las claves en un gestor seguro o documentarlas fuera del repositorio.
+
+Cuando Google Drive este conectado o exista Google Drive for Desktop sincronizado, copiar el `.zip` final a una carpeta externa, por ejemplo:
+
+```text
+Google Drive/HYL GESTION COMERCIAL/BACKUPS PLATAFORMA/
+```
+
+En una instalacion comercial nueva, usar una carpeta equivalente con el nombre del cliente o `Google Drive/DashCom/BACKUPS PLATAFORMA/`.
+
+Regla minima de continuidad:
+
+- Hacer backup `pre-update` antes de empezar.
+- Hacer backup `post-update` al terminar.
+- Mantener al menos una copia fuera del computador principal.
+- Verificar periodicamente que el `.zip` se pueda abrir y que contiene una base `.db`.
 
 ## Actualizar ventas
 
@@ -122,6 +249,25 @@ Usar el boton `PDF` en la barra superior. El selector permite incluir o excluir:
 La opcion de Groq es independiente y solo se incluye cuando se marca. El PDF se genera en el backend y se descarga en formato horizontal.
 
 Los CSV antiguos fueron retirados. Cualquier ruta `/api/export/:kind.csv` responde `410`; el informe oficial es el PDF gerencial.
+
+## Proyecciones gerenciales
+
+La plataforma calcula una proyeccion recomendada en backend y la reutiliza en:
+
+- `Proyeccion del mes`
+- `Informes gerenciales`
+- PDF gerencial
+
+En `Informes gerenciales` se ve al inicio como `Proyeccion gerencial de cierre`, con venta actual, rango probable y brecha proyectada. En el PDF se incluye si el usuario selecciona `Resumen ejecutivo`, `Informe mensual` o `Graficos gerenciales`.
+
+El modelo muestra:
+
+- proyeccion lineal por ritmo actual
+- proyeccion historica ajustada
+- rango conservador/optimista
+- confianza de la proyeccion
+
+Para julio 2026, por ejemplo, la lectura puede diferir de la proyeccion lineal si los primeros dias del mes historicamente representan una proporcion distinta del cierre mensual.
 
 ## API EVO
 
@@ -157,6 +303,7 @@ EVO_SYNC_INTERVAL_MS=60000
 ```
 
 El navegador escucha `/api/events` por SSE. Cuando el worker o una carga Excel insertan ventas nuevas, se emite `sales_updated` y la UI recarga el estado.
+Ademas, `/api/state` responde con cabeceras `no-store` y la UI consulta con `cache: no-store`, timestamp de version, refresco cada minuto y recarga al volver a enfocar la ventana.
 
 ## Groq
 
@@ -200,3 +347,14 @@ La version actual ya usa SQLite nativo con `better-sqlite3`, WAL, indices reales
 - Agregar cola persistente de reintentos EVO si la API empieza a entregar cursor incremental por venta.
 - Convertir acciones IA aprobadas en tareas/iniciativas con auditoria.
 - Agregar busqueda semantica para documentos, observaciones y resultados historicos.
+
+## Mercadeo sin datos inventados
+
+La pestana Mercadeo separa:
+
+- Tendencias de uso comercial: facturacion y registros diarios.
+- Adopcion por plan: sedes con venta sobre sedes activas.
+- Rentabilidad comercial: ingreso mensualizado estimado por plan y por sede/plan.
+- Planes de oportunidad: baja adopcion con venta o ticket relevante.
+
+No reportar impacto real de campanas hasta que exista una relacion de datos `campana -> venta` o una metodologia de atribucion registrada. La pestana no muestra campanas como bloque operativo.

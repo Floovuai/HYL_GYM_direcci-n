@@ -1,4 +1,6 @@
-# Modelo de datos
+# Modelo de datos DashCom
+
+La base actual de DashCom conserva el nombre `hyl_gym.db` y reglas de normalizacion HYL porque esta instalacion nacio sobre datos reales de HYL Gym. Para la version comercial limpia, estos nombres y reglas deben parametrizarse o migrarse sin alterar la base operativa.
 
 ## Tablas principales
 
@@ -15,11 +17,24 @@
 - `initiatives`: marketing, proyectos, convenios, requerimientos, planes e ideas.
 - `todos`: tareas del dia a dia.
 - `import_batches`: auditoria de importaciones.
+- `member_evolution`: evolucion mensual de miembros por sede; no se mezcla con ventas.
 - `metric_cache`: cache de agregados por periodo con version de datos.
 - `evo_sync_checkpoints`: estado del worker/sync EVO por mes.
 - `ai_context_snapshots`: contexto compacto enviado a IA.
 - `ai_insights`: respuestas generadas por IA por periodo.
 - `ai_actions`: acciones sugeridas por IA para seguimiento.
+
+## Compatibilidad HYL en la base actual
+
+Elementos que aun son especificos de la instalacion HYL:
+
+- Nombre de archivo por defecto: `data/hyl_gym.db`.
+- Rutas de semillas en `.env.example` y `seed.ts` apuntan a libros historicos HYL cuando existen en el equipo original.
+- Normalizacion de sedes HYL (`109`, `162`, `PRADO`, `VILLAVO`, etc.).
+- Reglas puntuales de reasignacion de asesores desde julio/agosto 2026.
+- Datos estaticos de estacionalidad historica en `src/server/data/`.
+
+Para vender DashCom a otro cliente, estos puntos deben moverse a configuracion, plantilla demo o migracion inicial.
 
 ## Indices de rendimiento
 
@@ -37,18 +52,46 @@ La tabla `sales` tiene indices para lectura operacional:
 
 Cada venta se identifica con una llave compuesta por sede, asesor, plan, cliente externo, descripcion, fecha/hora de venta, valor y cantidad. La tabla `sales` tiene un indice unico sobre `sale_key`.
 
+Desde el 16/07/2026 la sede efectiva de una venta puede venir de una regla de asignacion por asesor, sin modificar el payload original guardado en `raw_json`. Esto permite que julio conserve ventas historicas y que los cambios de sede de asesores afecten solo las ventas dentro de su vigencia. Las vistas mensuales de asesores agrupan por asesor+sede efectiva para que un cambio a mitad de mes no mezcle metas de sedes distintas.
+
 Cuando se carga un Excel o se sincroniza EVO:
 
 - Las ventas nuevas se insertan.
 - Las ventas ya existentes se omiten.
 - El resumen de importacion reporta `duplicates_skipped`.
 - Las ventas EVO con valor menor o igual a cero no se insertan en `sales`.
+- Las filas EVO descartadas quedan resumidas en `import_batches.details.ignoreReasons` para auditoria operativa.
+
+## Calidad comercial de datos
+
+El tablero expone una franja de salud comercial basada en `buildQualityReport`:
+
+- ventas positivas sin asesor asignado;
+- valor positivo sin asesor por sede;
+- duplicados por `sale_key` y duplicados naturales;
+- ventas positivas asociadas a usuarios de soporte EVO;
+- ultima carga, duplicados omitidos y filas ignoradas.
+
+Estos diagnosticos no modifican las tablas historicas. Sirven para corregir asignaciones, revisar importaciones y proteger comisiones antes de liquidar.
+
+## Evolucion de miembros
+
+`member_evolution` se actualiza por `UNIQUE(year, month, branch_id)`. La carga desde `Sedes > Cargar evolucion` hace `upsert` de:
+
+- activos inicio y fin;
+- nuevos, renovados, reinscripciones y retornos;
+- cancelaciones, vencidos, no renovados, suspendidos y salidas totales;
+- evolucion neta y fuente del archivo.
+
+La tabla permite calcular churn directo, salida bruta, retencion y evolucion neta sin alterar `sales`.
 
 ## Semillas
 
 - Ventas reales junio 2026: `VENTAS GENERALES.xlsx`.
 - Metas y mecanica julio-diciembre 2026: `Control_Comisiones_Anual_2026_FINAL.xlsx`.
 - Precios, estrategias, preventas y tarifas: `METAS, PRECIOS, ESTRATEGIAS, TARIFAS BOLD HYL.xlsx`.
+
+Estas semillas son utiles para la instalacion HYL. No deben incluirse como datos privados en una version comercial limpia.
 
 ## Metas
 
@@ -77,6 +120,12 @@ Variables de entorno tienen prioridad sobre SQLite para:
 - `EVO_SYNC_INTERVAL_MS`
 - `GROQ_API_KEY`
 - `GROQ_MODEL`
+
+## Mercadeo y atribucion
+
+`initiatives` permite registrar campanas de Marketing con `type`, `status`, `owner`, `channel`, `budget`, `expected_impact`, fechas y notas.
+
+La tabla no tiene una relacion directa con `sales`, por lo que la plataforma no debe afirmar ventas atribuidas a una campana. Mercadeo puede cruzar datos observados de ventas, metas, sedes, planes y recompra proxy, pero cualquier impacto de campana debe quedar como esperado o simulado hasta crear una llave de atribucion.
 
 ## Normalizacion clave
 

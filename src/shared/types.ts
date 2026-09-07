@@ -121,7 +121,7 @@ export interface BranchScore {
 }
 
 export interface DirectorCommission {
-  level: "Sin venta" | "Sin meta" | "META 1" | "META 2" | "META 3" | "META 4";
+  level: "Sin venta" | "Sin meta" | "META 1" | "META 2" | "META 3";
   bonus: number;
   progressMeta1: number;
   missingMeta1: number;
