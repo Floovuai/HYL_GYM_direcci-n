@@ -97,6 +97,10 @@ La tabla permite calcular churn directo, salida bruta, retencion y evolucion net
 
 Es independiente de `member_evolution`, que conserva los cortes diarios usados por Sedes y Experiencia.
 
+## Competencia (0.1.12)
+
+`branches` suma `address`, `maps_url`, `latitude`, `longitude`, `radius_m` y `location_status` (`confirmada`, `pendiente`, `cerrada`, `sin_ubicacion`). `competitors` suma ubicacion, `distance_m`, redes, `pricing_url`, `competitor_type`, `chain`, `status`, `source`, `osm_id`, `verified_at` y datos de la ultima revision. Tablas nuevas: `competitor_price_obs` (historial de precios con `is_current`), `competitor_changes`, `competition_runs` y `competitor_brands` (perfiles de marca). Detalle en [COMPETENCIA.md](COMPETENCIA.md).
+
 ## Semillas
 
 - Ventas reales junio 2026: `VENTAS GENERALES.xlsx`.
@@ -117,7 +121,7 @@ Desde julio 2026, las metas importadas se recalibran antes de guardar:
 
 - Meta 1 asesor usa historico de asesores productivos de la sede.
 - Meta 1 sede usa ventas recientes de la sede.
-- Bronce = 75%, Plata = 90%, Meta 2 = 110%, Meta 3 = 120% y Meta 4 = 130%.
+- Meta 2 = 110%, Meta 3 = 120% y Meta 4 = 130%.
 
 ## Settings publicos y secretos
 

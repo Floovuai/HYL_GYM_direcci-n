@@ -2,6 +2,13 @@
 
 Solo se listan las versiones con instalador Desktop. Detalle de entrega en [docs/DESKTOP_RELEASE.md](docs/DESKTOP_RELEASE.md).
 
+## 0.1.12 - 2026-09-20
+- Nueva pestana **Competencia**: mapa por sede con radio propio, busqueda de gimnasios cercanos (OpenStreetMap), lista por verificar, tabla de precios con tu oferta al lado y cambios recientes.
+- **Subir informe**: Groq interpreta un archivo (.xlsx, .csv, .txt, .md) o texto pegado, actualiza los competidores existentes y crea los nuevos por verificar.
+- Revision semanal automatica de las paginas de planes de cada competidor con deteccion de cambios de precio y promociones (mientras DashCom este abierto).
+- Semilla con las 6 sedes ubicadas, Calle 109 cerrada y perfiles de Smart Fit, Bodytech, Spinning Center y Fitness24Seven con fuente y fecha. Detalle en [docs/COMPETENCIA.md](docs/COMPETENCIA.md).
+- Entrega: el flujo del instalador ahora informa el estado de la firma digital (ver docs/DESKTOP_RELEASE.md).
+
 ## 0.1.11 - 2026-09-20
 - Asesores: el cartel **Bonificacion 2026 por porcentaje de meta alcanzada** pasa al hueco libre de la segunda fila de KPIs y los paneles **Distribucion de scores** y **Ritmo de venta de asesores** suben en la columna derecha.
 

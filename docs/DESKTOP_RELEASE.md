@@ -44,6 +44,21 @@ Mantener en `desktop/main.cjs` la copia inicial de la base solo cuando no existe
 8. Actualizar `LEEME.txt` con la version, fecha, novedades reales, ubicacion de datos y respaldo. Revisar tambien las notas que genera `scripts/build-desktop-installer.ps1`, para no arrastrar una novedad fija de una version anterior.
 9. Entregar al usuario el enlace absoluto al nuevo `.exe`, un resumen de cambios y las verificaciones realizadas. Generar el instalador no implica ejecutarlo sobre la instalacion del usuario.
 
+## Firma digital (antivirus y SmartScreen)
+
+Hasta la version 0.1.12 el instalador **no esta firmado** (`Get-AuthenticodeSignature` devuelve `NotSigned`). Sin firma, AVG y SmartScreen tratan como desconocido cada instalador nuevo. Una firma valida solo la puede emitir una autoridad certificadora: no puede generarse con una herramienta del proyecto.
+
+Para firmar, obtener un certificado de firma de codigo (OV o EV) y, antes de `npm run desktop:installer`, definir en la sesion de PowerShell:
+
+```powershell
+$env:CSC_LINK = 'C:utacertificado.pfx'      # o una cadena base64 del .pfx
+$env:CSC_KEY_PASSWORD = '<contrasena del certificado>'
+```
+
+Electron Builder firma entonces el instalador y el desinstalador. No guardar el certificado ni su contrasena en el repositorio. El script de entrega muestra el estado de la firma del instalador generado y lo anota en `LEEME.txt`.
+
+Un certificado autofirmado no elimina las alertas (no lo reconocen ni AVG ni SmartScreen) y solo serviria si se instala manualmente como de confianza en cada equipo.
+
 ## Criterio de finalizacion
 
 Una actualizacion de la aplicacion solo esta lista cuando el nuevo instalador existe, corresponde al codigo validado y esta en la carpeta de entrega. Si una prueba o el empaquetado falla, resolverlo o comunicar el bloqueo concreto; no afirmar que un instalador anterior contiene la nueva actualizacion.

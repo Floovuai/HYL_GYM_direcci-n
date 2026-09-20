@@ -1,0 +1,146 @@
+{
+  "version": "2026-09-20",
+  "notes": "Semilla del modulo Competencia. Solo contiene datos con fuente publica y fecha; nada se inventa. Las coordenadas de las sedes salen de los enlaces de Google Maps publicados en hylgym.com/sedes-web. Los radios son valores iniciales editables por sede.",
+  "branches": [
+    {
+      "match": "Buenos Aires",
+      "address": "Calle 7A # 3-07 Sur, Bogota",
+      "mapsUrl": "https://maps.app.goo.gl/5YoUuHvGcgmBMBf37",
+      "lat": 4.5789998,
+      "lng": -74.0820045,
+      "radiusM": 1200,
+      "status": "confirmada"
+    },
+    {
+      "match": "Santa Matilde",
+      "address": "Calle 8 Sur # 35A-58, Bogota",
+      "mapsUrl": "https://maps.app.goo.gl/ZuZEK4LwBB7rEefy5",
+      "lat": 4.6021895,
+      "lng": -74.1106567,
+      "radiusM": 1500,
+      "status": "confirmada"
+    },
+    {
+      "match": "Modelia",
+      "address": "Calle 24 # 73F-07, Bogota",
+      "mapsUrl": "https://maps.app.goo.gl/BQYcEsGkRk8LNaA2A",
+      "lat": 4.6646438,
+      "lng": -74.1187631,
+      "radiusM": 1500,
+      "status": "confirmada"
+    },
+    {
+      "match": "Colors 162",
+      "address": "Calle 162 # 7F-54, Bogota",
+      "mapsUrl": "https://maps.app.goo.gl/ZLmWSwP9qniyjHQu8",
+      "lat": 4.7376462,
+      "lng": -74.0256961,
+      "radiusM": 1500,
+      "status": "confirmada"
+    },
+    {
+      "match": "Prado",
+      "address": "Calle 129 # 52-86, Bogota",
+      "mapsUrl": "https://maps.app.goo.gl/nXTWTKjCVR4TPhu7A",
+      "lat": 4.7163489,
+      "lng": -74.059291,
+      "radiusM": 1500,
+      "status": "confirmada"
+    },
+    {
+      "match": "Villavicencio",
+      "address": "Villavicencio, Meta (direccion no publicada en el sitio)",
+      "mapsUrl": "https://maps.app.goo.gl/yZjtEq8oom2KmXxf9",
+      "lat": 4.1136039,
+      "lng": -73.6059833,
+      "radiusM": 2500,
+      "status": "confirmada"
+    },
+    {
+      "match": "Calle 109",
+      "status": "cerrada"
+    },
+    {
+      "match": "Online",
+      "status": "sin_ubicacion"
+    }
+  ],
+  "brands": [
+    {
+      "name": "Smart Fit",
+      "aliases": ["smartfit"],
+      "website": "https://www.smartfit.com.co",
+      "pricingUrl": "https://www.smartfit.com.co/planes",
+      "instagram": "smartfitco",
+      "facebook": "SmartFitOficialColombia",
+      "whatsapp": "+573234583063",
+      "segment": "Low cost (cadena)",
+      "notes": "Precios de marca: segun su sitio pueden variar por sede. Redes tomadas del sitio oficial.",
+      "prices": [
+        { "plan": "Plan Fit (12 meses)", "price": 69900, "period": "mes", "promo": "$19.900 los 2 primeros meses", "observedAt": "2026-09-20", "confidence": "media", "sourceUrl": "https://www.smartfit.com.co/" },
+        { "plan": "Plan Smart (sin permanencia)", "price": 89900, "period": "mes", "promo": "$19.900 los 2 primeros meses", "observedAt": "2026-09-20", "confidence": "media", "sourceUrl": "https://www.smartfit.com.co/" },
+        { "plan": "Plan Black (12 meses)", "price": 119900, "period": "mes", "promo": "$19.900 los 2 primeros meses", "observedAt": "2026-09-20", "confidence": "media", "sourceUrl": "https://www.smartfit.com.co/" },
+        { "plan": "Plan Black sin permanencia", "price": 149900, "period": "mes", "promo": "", "observedAt": "2026-09-20", "confidence": "media", "sourceUrl": "https://www.smartfit.com.co/" }
+      ],
+      "locations": []
+    },
+    {
+      "name": "Bodytech",
+      "aliases": ["body tech"],
+      "website": "https://bodytech.com.co/",
+      "pricingUrl": "",
+      "instagram": "",
+      "facebook": "",
+      "whatsapp": "",
+      "segment": "Premium (cadena)",
+      "notes": "Sitio oficial tomado de OpenStreetMap. Redes por completar (no verificadas). Tarifas de prensa de enero de 2026: pueden estar desactualizadas.",
+      "prices": [
+        { "plan": "Mensual (horas naranja)", "price": 205000, "period": "mes", "promo": "", "observedAt": "2026-01-05", "confidence": "baja", "sourceUrl": "https://www.eltiempo.com/cultura/gente/cuanto-vale-inscribirse-al-gimnasio-en-2026-estas-son-las-tarifas-de-bodytech-spinning-center-y-smartfit-3522055" },
+        { "plan": "Trimestral con permanencia", "price": 265000, "period": "mes", "promo": "50% de descuento en un mes", "observedAt": "2026-01-05", "confidence": "baja", "sourceUrl": "https://www.eltiempo.com/cultura/gente/cuanto-vale-inscribirse-al-gimnasio-en-2026-estas-son-las-tarifas-de-bodytech-spinning-center-y-smartfit-3522055" }
+      ],
+      "locations": []
+    },
+    {
+      "name": "Spinning Center",
+      "aliases": ["spinning center gym"],
+      "website": "",
+      "pricingUrl": "",
+      "instagram": "",
+      "facebook": "",
+      "whatsapp": "",
+      "segment": "Boutique / ciclismo indoor (cadena)",
+      "notes": "Tarifas de prensa de enero de 2026: pueden estar desactualizadas. Sitio y redes por completar.",
+      "prices": [
+        { "plan": "Mensual (debito automatico)", "price": 99000, "period": "mes", "promo": "", "observedAt": "2026-01-05", "confidence": "baja", "sourceUrl": "https://www.eltiempo.com/cultura/gente/cuanto-vale-inscribirse-al-gimnasio-en-2026-estas-son-las-tarifas-de-bodytech-spinning-center-y-smartfit-3522055" },
+        { "plan": "6 meses + 1 mes gratis", "price": 460000, "period": "semestre", "months": 7, "promo": "1 mes gratis", "observedAt": "2026-01-05", "confidence": "baja", "sourceUrl": "https://www.eltiempo.com/cultura/gente/cuanto-vale-inscribirse-al-gimnasio-en-2026-estas-son-las-tarifas-de-bodytech-spinning-center-y-smartfit-3522055" },
+        { "plan": "12 meses una sede + 1 mes gratis", "price": 650000, "period": "ano", "months": 13, "promo": "1 mes gratis", "observedAt": "2026-01-05", "confidence": "baja", "sourceUrl": "https://www.eltiempo.com/cultura/gente/cuanto-vale-inscribirse-al-gimnasio-en-2026-estas-son-las-tarifas-de-bodytech-spinning-center-y-smartfit-3522055" }
+      ],
+      "locations": []
+    },
+    {
+      "name": "Fitness24Seven",
+      "aliases": ["fitness24seven", "fitness 24 seven", "fitness24 seven"],
+      "website": "https://co.fitness24seven.com",
+      "pricingUrl": "",
+      "instagram": "",
+      "facebook": "",
+      "whatsapp": "",
+      "segment": "Low cost 24 horas (cadena)",
+      "notes": "Su sitio no muestra precios ni redes por sede. Ubicaciones tomadas de su listado publico.",
+      "prices": [],
+      "locations": [
+        { "name": "Fitness24Seven Buenos Aires", "address": "Carrera 3 # 1-39, Bogota" },
+        { "name": "Fitness24Seven NQS Comuneros", "address": "Carrera 30 # 3-51, Bogota" },
+        { "name": "Fitness24Seven 20 de Julio", "address": "Calle 27 Sur # 9-47, Bogota" },
+        { "name": "Fitness24Seven Alamos", "address": "Calle 72 # 100B-04, Bogota" },
+        { "name": "Fitness24Seven Chapinero", "address": "Calle 66 # 13-45, Bogota" },
+        { "name": "Fitness24Seven Luna Park", "address": "Carrera 14 # 10-73 Sur, Bogota" },
+        { "name": "Fitness24Seven Metro Recreo", "address": "Calle 69 Sur # 97C-46, Bogota" },
+        { "name": "Fitness24Seven Portal Americas", "address": "Carrera 86 bis # 42G, Bogota" },
+        { "name": "Fitness24Seven Quinta Paredes", "address": "Calle 24 # 43A-90, Bogota" },
+        { "name": "Fitness24Seven San Jose de Bavaria", "address": "Carrera 72 # 175-60, Bogota" },
+        { "name": "Fitness24Seven Suba", "address": "Avenida Calle 145 # 99A-95, Bogota" }
+      ]
+    }
+  ]
+}

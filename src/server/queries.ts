@@ -2101,7 +2101,7 @@ export async function buildManagerReport(year: number, month: number) {
     bucket.commissions += num(advisor.commission?.finalCommission);
     advisorLevelMap.set(level, bucket);
   }
-  const levelOrder = ["Sin venta", "Sin comision", "Activacion", "Bronce", "Plata", "Meta 1", "Meta 2", "Meta 3", "Meta 4"];
+  const levelOrder = ["Sin venta", "Sin comision", "Meta 1", "Meta 2", "Meta 3", "Meta 4"];
   const advisorLevelDistribution = Array.from(advisorLevelMap.values()).sort(
     (a, b) => levelOrder.indexOf(a.level) - levelOrder.indexOf(b.level)
   );

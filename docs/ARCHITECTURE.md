@@ -106,6 +106,8 @@ Ambos se cachean en memoria al primer uso. Los utilitarios de `tools/` regeneran
 - `src/server/env.ts`: lectura de `.env` y resolucion de rutas del proyecto.
 - `src/server/importers.ts`: importacion Excel, EVO, metas motivacionales, precios, campanas, defaults y evaluaciones.
 - `src/server/queries.ts`: agregaciones, estado de app, QA, recomendaciones, experiencia, competidores y modelo de informe gerencial.
+- `src/server/competition.ts`: modulo Competencia (ubicacion de sedes, descubrimiento OpenStreetMap, precios semanales, informes con Groq y rutas `/api/competition`); ver [COMPETENCIA.md](COMPETENCIA.md).
+- `src/shared/competition.ts`: funciones puras del modulo (coordenadas, coincidencias, precios, cambios).
 - `src/server/pdfReport.ts`: PDF gerencial horizontal con tablas, graficos, calidad de datos y sugerencias.
 - `src/server/index.ts`: API HTTP, login/sesiones, configuracion, salud, worker EVO, SSE, memoria Groq, exportes y bootstrap.
 - `src/server/seed.ts`: siembra inicial (`npm run seed`) y reseteo (`npm run db:reset`).
@@ -135,6 +137,8 @@ Autenticacion y salud:
 
 - `GET/POST /login`, `ALL /logout`: sesion local con cookie `httpOnly`.
 - `GET /api/health`: conteos basicos y salud local (unica ruta API publica).
+- `GET /api/ping`: sonda ligera (sin base de datos) usada por el arranque de escritorio.
+- `/api/competition/*`: modulo Competencia (ver [COMPETENCIA.md](COMPETENCIA.md)).
 
 Estado y tiempo real:
 
@@ -242,7 +246,7 @@ La plataforma separa:
 - Esquema historico enero-junio 2026.
 - Esquema de rendimiento desde julio 2026.
 
-Desde julio, Meta 1 de asesor se calcula por sede con promedio de asesores productivos, piso sobre el mejor resultado reciente y tope contra ese mismo mejor resultado. Las metas 2, 3 y 4 son 110%, 120% y 130% de Meta 1. Bronce es 75% y Plata 90%.
+Desde julio, Meta 1 de asesor se calcula por sede con promedio de asesores productivos, piso sobre el mejor resultado reciente y tope contra ese mismo mejor resultado. Las metas 2, 3 y 4 son 110%, 120% y 130% de Meta 1.
 
 Las metas de sede tambien se recalibran con ventas recientes de la sede. El score de sedes conserva comision de director en backend, pero la UI prioriza avance, registros y lectura operativa.
 

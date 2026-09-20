@@ -1316,13 +1316,7 @@ export async function importCommissionWorkbook(filePath: string) {
     const row = schema[rowNumber - 1];
     const level = text(row, 1);
     if (!level) continue;
-    const normalizedLevel = normalizeKey(level);
-    const conditionText =
-      normalizedLevel === "BRONCE"
-        ? "75% de Meta 1 asesor"
-        : normalizedLevel === "PLATA"
-          ? "90% de Meta 1 asesor"
-          : text(row, 2);
+    const conditionText = text(row, 2);
     await run(
       `INSERT INTO commission_tiers (level, condition_text, description, percentage, fixed_bonus, objective, sort_order)
        VALUES (?, ?, ?, ?, ?, ?, ?)

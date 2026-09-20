@@ -161,9 +161,6 @@ export const JULY_2026_ADVISOR_BRANCH_CHANGES = [
 const COMMISSION_RATES: Record<CommissionLevel, { rate: number; fixedBonus: number }> = {
   "Sin venta": { rate: 0, fixedBonus: 0 },
   "Sin comision": { rate: 0, fixedBonus: 0 },
-  Activacion: { rate: 0, fixedBonus: 0 },
-  Bronce: { rate: 0, fixedBonus: 0 },
-  Plata: { rate: 0, fixedBonus: 0 },
   "Meta 1": { rate: 0.004, fixedBonus: 0 },
   "Meta 2": { rate: 0.008, fixedBonus: 0 },
   "Meta 3": { rate: 0.012, fixedBonus: 0 },
@@ -173,9 +170,6 @@ const COMMISSION_RATES: Record<CommissionLevel, { rate: number; fixedBonus: numb
 const HISTORICAL_COMMISSION_RATES: Record<CommissionLevel, { rate: number; fixedBonus: number }> = {
   "Sin venta": { rate: 0, fixedBonus: 0 },
   "Sin comision": { rate: 0, fixedBonus: 0 },
-  Activacion: { rate: 0, fixedBonus: 0 },
-  Bronce: { rate: 0, fixedBonus: 0 },
-  Plata: { rate: 0, fixedBonus: 0 },
   "Meta 1": { rate: 0.004, fixedBonus: 0 },
   "Meta 2": { rate: 0.008, fixedBonus: 0 },
   "Meta 3": { rate: 0.012, fixedBonus: 0 },

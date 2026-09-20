@@ -24,10 +24,7 @@ La plataforma separa dos esquemas:
 
 | Nivel | Condicion | Comision |
 | --- | --- | --- |
-| Activacion | 60% de Meta 1 asesor | 0.15% |
-| Bronce | 75% de Meta 1 asesor | 0.25% |
-| Plata | 90% de Meta 1 asesor | 0.35% |
-| Meta 1 | 100% de Meta 1 asesor | 0.50% |
+| Meta 1 | 100% de Meta 1 asesor | 0.40% |
 | Meta 2 | 110% de Meta 1 asesor | 0.80% |
 | Meta 3 | 120% de Meta 1 asesor | 1.20% |
 | Meta 4 | 130% de Meta 1 asesor | 2.00% + 500.000 |
@@ -46,9 +43,6 @@ Estas reglas de vigencia son datos de negocio HYL. No deben tratarse como reglas
 
 ```text
 Meta 1 asesor = Meta 1 sede oficial / conteo oficial de asesores
-Activacion = 60% de Meta 1 asesor
-Bronce = 75% de Meta 1 asesor
-Plata = 90% de Meta 1 asesor
 Meta 2 = 110% de Meta 1 asesor
 Meta 3 = 120% de Meta 1 asesor
 Meta 4 = 130% de Meta 1 asesor

@@ -26,6 +26,7 @@ const AiChat = lazyView(() => import("./Assistant"), "AiChat");
 const Configuration = lazyView(() => import("./Configuration"), "Configuration");
 const ConsultaApp = lazyView(() => import("./Consulta"), "ConsultaApp");
 const Evolution = lazyView(() => import("./Evolution"), "Evolution");
+const Competition = lazyView(() => import("./Competition"), "Competition");
 
 function App() {
   const initialPeriod = React.useMemo(currentPeriod, []);
@@ -307,6 +308,7 @@ function App() {
             {tab === "branches" && <Branches state={state} year={year} month={month} onReload={load} setNotice={setNotice} />}
             {tab === "evolution" && <Evolution setNotice={setNotice} />}
             {tab === "marketing" && <Marketing state={state} onReload={load} setNotice={setNotice} />}
+            {tab === "competition" && <Competition setNotice={setNotice} />}
             {tab === "trends" && <SalesTrends state={state} onReload={load} setNotice={setNotice} />}
             {tab === "direction" && <Direction state={state} year={year} month={month} onReload={load} setNotice={setNotice} />}
             {tab === "assistant" && <AiChat state={state} year={year} month={month} setNotice={setNotice} />}

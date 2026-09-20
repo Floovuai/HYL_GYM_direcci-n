@@ -88,6 +88,94 @@ async function migrateMemberEvolutionDaily() {
   await run("CREATE INDEX IF NOT EXISTS idx_member_evolution_branch_period ON member_evolution(branch_id, year, month, day)");
 }
 
+// Modulo Competencia: ubicacion de sedes, seguimiento de competidores y precios observados.
+async function migrateCompetition() {
+  await ensureColumn("branches", "address", "TEXT DEFAULT ''");
+  await ensureColumn("branches", "maps_url", "TEXT DEFAULT ''");
+  await ensureColumn("branches", "latitude", "REAL");
+  await ensureColumn("branches", "longitude", "REAL");
+  await ensureColumn("branches", "radius_m", "INTEGER DEFAULT 1500");
+  await ensureColumn("branches", "location_status", "TEXT DEFAULT 'pendiente'");
+
+  await ensureColumn("competitors", "latitude", "REAL");
+  await ensureColumn("competitors", "longitude", "REAL");
+  await ensureColumn("competitors", "distance_m", "INTEGER");
+  await ensureColumn("competitors", "website", "TEXT DEFAULT ''");
+  await ensureColumn("competitors", "pricing_url", "TEXT DEFAULT ''");
+  await ensureColumn("competitors", "instagram", "TEXT DEFAULT ''");
+  await ensureColumn("competitors", "facebook", "TEXT DEFAULT ''");
+  await ensureColumn("competitors", "whatsapp", "TEXT DEFAULT ''");
+  await ensureColumn("competitors", "phone", "TEXT DEFAULT ''");
+  await ensureColumn("competitors", "competitor_type", "TEXT DEFAULT 'directo'");
+  await ensureColumn("competitors", "chain", "TEXT DEFAULT ''");
+  await ensureColumn("competitors", "status", "TEXT DEFAULT 'confirmado'");
+  await ensureColumn("competitors", "source", "TEXT DEFAULT 'manual'");
+  await ensureColumn("competitors", "osm_id", "TEXT");
+  await ensureColumn("competitors", "verified_at", "TEXT");
+  await ensureColumn("competitors", "last_checked_at", "TEXT");
+  await ensureColumn("competitors", "last_check_note", "TEXT DEFAULT ''");
+
+  await exec(`
+    CREATE TABLE IF NOT EXISTS competitor_price_obs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      competitor_id INTEGER NOT NULL REFERENCES competitors(id),
+      plan_name TEXT NOT NULL,
+      price REAL,
+      period TEXT DEFAULT '',
+      monthly_price REAL,
+      enrollment_fee REAL,
+      promo TEXT DEFAULT '',
+      valid_until TEXT DEFAULT '',
+      source TEXT NOT NULL DEFAULT 'manual',
+      source_url TEXT DEFAULT '',
+      confidence TEXT NOT NULL DEFAULT 'media',
+      evidence TEXT DEFAULT '',
+      is_current INTEGER NOT NULL DEFAULT 1,
+      observed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_competitor_price_obs_current ON competitor_price_obs(competitor_id, is_current);
+
+    CREATE TABLE IF NOT EXISTS competitor_changes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      competitor_id INTEGER NOT NULL REFERENCES competitors(id),
+      kind TEXT NOT NULL,
+      plan_name TEXT DEFAULT '',
+      old_value TEXT DEFAULT '',
+      new_value TEXT DEFAULT '',
+      source TEXT DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_competitor_changes_created ON competitor_changes(created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS competition_runs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      kind TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'ok',
+      summary TEXT DEFAULT '',
+      started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      finished_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_competition_runs_kind ON competition_runs(kind, finished_at);
+
+    CREATE TABLE IF NOT EXISTS competitor_brands (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL UNIQUE,
+      aliases TEXT DEFAULT '[]',
+      website TEXT DEFAULT '',
+      pricing_url TEXT DEFAULT '',
+      instagram TEXT DEFAULT '',
+      facebook TEXT DEFAULT '',
+      whatsapp TEXT DEFAULT '',
+      segment TEXT DEFAULT '',
+      notes TEXT DEFAULT '',
+      prices TEXT DEFAULT '[]',
+      locations TEXT DEFAULT '[]',
+      source TEXT DEFAULT 'semilla',
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+}
+
 export async function migrate() {
   await exec(`
     CREATE TABLE IF NOT EXISTS branches (
@@ -489,6 +577,7 @@ export async function migrate() {
   `);
 
   await migrateMemberEvolutionDaily();
+  await migrateCompetition();
 
   await ensureColumn("branches", "updated_at", "TEXT");
   await run("UPDATE branches SET updated_at = COALESCE(updated_at, created_at, CURRENT_TIMESTAMP)");

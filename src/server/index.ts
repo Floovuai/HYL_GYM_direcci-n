@@ -10,6 +10,7 @@ import { loadLocalEnv, resolveFromRoot } from "./env";
 import { migrate } from "./schema";
 import { all, get, openDb, run, saveDb, scalar, transaction } from "./db";
 import { getStateEntry } from "./lib/stateCache";
+import { registerCompetitionRoutes, seedCompetition, startCompetitionScheduler } from "./competition";
 import {
   canonicalBranch,
   importMemberEvolutionWorkbook,
@@ -3932,6 +3933,8 @@ app.get("/api/export/gerencial.pdf", async (req, res, next) => {
   }
 });
 
+registerCompetitionRoutes(app, upload);
+
 const clientDist = resolveFromRoot(process.env.CLIENT_DIST, "./dist/client");
 if (fs.existsSync(clientDist)) {
   app.use(express.static(clientDist, {
@@ -4006,10 +4009,12 @@ async function bootstrap() {
     await seedDefaults();
   });
   await seedEvolutionHistory();
+  await seedCompetition();
   const sales = (await scalar<number>("SELECT COUNT(*) FROM sales")) ?? 0;
   console.log(`DashCom API lista en http://localhost:${port} (${sales} ventas)`);
   app.listen(port, host, () => {
     startEvoWorker();
+    startCompetitionScheduler();
     // Deja el estado del periodo actual calculado antes de la primera consulta.
     getStateEntry(buildAppState).catch((error) => console.warn("No se pudo precalcular el estado", error instanceof Error ? error.message : error));
   });

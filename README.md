@@ -6,7 +6,7 @@ La instalacion actual opera con datos de HYL Gym como cliente base. Por continui
 
 ## Estado para continuar DashCom
 
-Fecha de actualizacion documental: 2026-09-20. Version vigente: 0.1.11 (ver [CHANGELOG.md](CHANGELOG.md)). Guia de velocidad y cache en [docs/PERFORMANCE.md](docs/PERFORMANCE.md).
+Fecha de actualizacion documental: 2026-09-20. Version vigente: 0.1.12 (ver [CHANGELOG.md](CHANGELOG.md)). Guia de velocidad y cache en [docs/PERFORMANCE.md](docs/PERFORMANCE.md).
 
 - Marca visible de la app: `DashCom` en login, encabezado, titulo HTML, chat IA, PDF y logs de backend.
 - Paquete npm: `dashcom`.
@@ -103,6 +103,10 @@ Usa `Sedes > Cargar evolucion` para importar el Excel mensual de activos, renova
 - Queda auditada en `import_batches` con fuente `member_evolution_upload`.
 
 Si no se ha cargado evolucion de miembros, la plataforma mantiene ventas y comisiones operativas, pero churn, retencion real y experiencia por activos quedan marcados como `sin evolucion`.
+
+## Competencia (pestana)
+
+Mapa de cada sede con los gimnasios competidores cercanos, tabla de precios y promociones, revision semanal automatica con Groq e importacion de informes. Fuentes gratuitas (OpenStreetMap y paginas publicas). Guia completa en [docs/COMPETENCIA.md](docs/COMPETENCIA.md).
 
 ## Mercadeo
 

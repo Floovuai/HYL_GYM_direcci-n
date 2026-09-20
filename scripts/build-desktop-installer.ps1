@@ -126,6 +126,23 @@ if (Test-Path -LiteralPath $changelog) {
     }
   }
 }
+# La comprobacion de firma es informativa: nunca debe impedir la entrega.
+$signatureStatus = "Desconocido"
+$signatureSubject = ""
+try {
+  Import-Module Microsoft.PowerShell.Security -ErrorAction Stop
+  $signature = Get-AuthenticodeSignature -LiteralPath $destination -ErrorAction Stop
+  $signatureStatus = [string]$signature.Status
+  if ($signature.SignerCertificate) { $signatureSubject = $signature.SignerCertificate.Subject }
+} catch {
+  Write-Warning "No se pudo comprobar la firma digital: $($_.Exception.Message)"
+}
+if ($signatureStatus -eq 'Valid') {
+  $summary += "Firma digital: valida ($signatureSubject)"
+} else {
+  $summary += "Firma digital: sin firmar o no comprobada (estado $signatureStatus). Windows y los antivirus pueden mostrar avisos. Ver docs/DESKTOP_RELEASE.md."
+  Write-Warning "El instalador no esta firmado; defina CSC_LINK y CSC_KEY_PASSWORD para firmarlo."
+}
 $summary | Set-Content -LiteralPath (Join-Path $OutputDirectory "LEEME.txt") -Encoding UTF8
 
 Write-Output "Instalador creado: $destination"

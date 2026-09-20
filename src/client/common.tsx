@@ -6,13 +6,14 @@ import {
   LineChart,
   Megaphone,
   MessageCircle,
+  Radar,
   Settings,
   Sparkles,
   TrendingUp,
   Users
 } from "lucide-react";
 
-export type TabId = "dashboard" | "projection" | "advisors" | "branches" | "evolution" | "marketing" | "trends" | "experience" | "direction" | "assistant" | "settings";
+export type TabId = "dashboard" | "projection" | "advisors" | "branches" | "evolution" | "marketing" | "competition" | "trends" | "experience" | "direction" | "assistant" | "settings";
 
 export type AppState = any;
 
@@ -40,6 +41,7 @@ export const tabs: Array<{ id: TabId; label: string; icon: React.ElementType }> 
   { id: "branches", label: "Sedes", icon: Building2 },
   { id: "evolution", label: "Evolución", icon: Activity },
   { id: "marketing", label: "Mercadeo", icon: Megaphone },
+  { id: "competition", label: "Competencia", icon: Radar },
   { id: "trends", label: "Tendencias", icon: TrendingUp },
   { id: "direction", label: "Dirección", icon: Sparkles },
   { id: "assistant", label: "Chat IA", icon: MessageCircle },

@@ -486,7 +486,7 @@ export function buildReportFallbackInsights(state: AppState, year: number, month
     row.commissions += Number(advisor.commission?.finalCommission || 0);
     levelMap.set(level, row);
   }
-  const levelOrder = ["Sin venta", "Sin comision", "Activacion", "Bronce", "Plata", "Meta 1", "Meta 2", "Meta 3", "Meta 4"];
+  const levelOrder = ["Sin venta", "Sin comision", "Meta 1", "Meta 2", "Meta 3", "Meta 4"];
   const planMap = new Map<string, any>();
   for (const plan of cleanRows(state.plans)) {
     const sales = Number(plan.sales || 0);
