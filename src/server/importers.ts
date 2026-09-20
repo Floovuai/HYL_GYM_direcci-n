@@ -230,6 +230,55 @@ function evolutionCell(row: SheetRow, header: Map<string, number>, label: string
   return index === undefined ? null : row[index];
 }
 
+function sheetHeaderMap(header: SheetRow) {
+  return new Map(header.map((value, index) => [normalizeKey(value), index]));
+}
+
+function headerIndex(header: Map<string, number>, aliases: string[], fallbackColumn: number) {
+  for (const alias of aliases) {
+    const index = header.get(normalizeKey(alias));
+    if (index !== undefined) return index;
+  }
+  return fallbackColumn - 1;
+}
+
+function salesHeaderMap(header: SheetRow) {
+  const map = sheetHeaderMap(header);
+  return {
+    branch: headerIndex(map, ["Sede/club", "Sede", "Club"], 1),
+    type: headerIndex(map, ["Tipo"], 2),
+    id: headerIndex(map, ["ID", "Cliente ID", "ID cliente"], 3),
+    firstName: headerIndex(map, ["Nombre"], 4),
+    lastName: headerIndex(map, ["Apellido"], 5),
+    item: headerIndex(map, ["Item", "Ítem", "tem"], 6),
+    description: headerIndex(map, ["Descripción", "Descripcion", "Descripci n", "Plan", "Producto"], 7),
+    startedAt: headerIndex(map, ["Inicio en", "Inicio"], 8),
+    quantity: headerIndex(map, ["Cantidad"], 9),
+    value: headerIndex(map, ["Valor", "Total", "Monto"], 10),
+    saleId: headerIndex(map, ["ID de venta", "Id venta", "Venta ID"], 11),
+    soldAt: headerIndex(map, ["Fecha de venta", "Fecha venta", "Fecha"], 11),
+    paymentMethod: headerIndex(map, ["Método de pago", "Metodo de pago", "M todo de pago", "Forma de pago"], 12),
+    advisor: headerIndex(map, ["Empleado comisión", "Empleado comision", "Empleado comisi n", "Asesor", "Vendedor"], 13),
+    origin: headerIndex(map, ["Origen"], 14)
+  };
+}
+
+function salesCell(row: SheetRow, header: ReturnType<typeof salesHeaderMap>, key: keyof ReturnType<typeof salesHeaderMap>): CellValue {
+  return row[header[key]] ?? null;
+}
+
+function salesText(row: SheetRow, header: ReturnType<typeof salesHeaderMap>, key: keyof ReturnType<typeof salesHeaderMap>) {
+  return cleanDisplay(salesCell(row, header, key));
+}
+
+function salesNumber(row: SheetRow, header: ReturnType<typeof salesHeaderMap>, key: keyof ReturnType<typeof salesHeaderMap>) {
+  const value = salesCell(row, header, key);
+  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+  if (typeof value === "boolean" || value === null || value === undefined) return 0;
+  const parsed = Number(String(value).replace(/[$,\s]/g, ""));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 function saleKey(input: {
   branchId: number;
   advisorId: number | null;
@@ -252,7 +301,7 @@ function saleKey(input: {
   ].join("|");
 }
 
-async function loadSheet(filePath: string, sheet?: string) {
+export async function loadSheet(filePath: string, sheet?: string) {
   let rows = (await readSheet(filePath, sheet ?? 1)) as unknown;
   if (shouldRetryWithRepairedDimensions(filePath, rows)) {
     const repairedPath = repairXlsxDimensions(filePath);
@@ -392,6 +441,7 @@ const ESTEFANIA_SALE_CORRECTIONS = new Set([
 
 function advisorForSale(input: {
   rawAdvisor: unknown;
+  rawBranch?: unknown;
   clientName?: unknown;
   clientLastName?: unknown;
   planName?: unknown;
@@ -410,6 +460,19 @@ function advisorForSale(input: {
   ].join("|");
   if (ESTEFANIA_SALE_CORRECTIONS.has(correctionKey)) {
     return "ESTEFANIA YINNETH BUSTOS QUINTERO";
+  }
+  // Regla Villa Mayor: durante la preventa (desde agosto 2026) la sede la opera
+  // solo Estefania. Toda venta de Villa Mayor sin un asesor activo nombrado
+  // (campo vacio, usuario generico tipo SUPORTEEVO o un asesor retirado) se
+  // atribuye a ella. Las ventas con un asesor activo nombrado conservan su credito.
+  if (soldAt && soldAt >= new Date(Date.UTC(2026, 7, 1))) {
+    const branchCode = canonicalBranch(input.rawBranch).code;
+    if (
+      (branchCode === "VILLA MAYOR" || branchCode === "109") &&
+      (unassignedAdvisor(input.rawAdvisor) || isAdvisorRemovedFromSale(input.rawAdvisor, soldAt))
+    ) {
+      return "ESTEFANIA YINNETH BUSTOS QUINTERO";
+    }
   }
   if (
     soldAt &&
@@ -467,7 +530,7 @@ function hasRemovedAdvisorField(row: Record<string, unknown>) {
   return false;
 }
 
-async function ensureBranch(raw: unknown) {
+export async function ensureBranch(raw: unknown) {
   const branch = canonicalBranch(raw);
   await run(
     `INSERT INTO branches (code, name, display_name)
@@ -598,6 +661,7 @@ export async function importSalesWorkbook(
   const sheet = await loadSheet(filePath);
   if (!sheet.length) throw new Error("El archivo de ventas no tiene hojas");
   validateHeaderRow(sheet, SALES_HEADER_REQUIREMENTS, "ventas");
+  const header = salesHeaderMap(sheet[0] ?? []);
 
   const sourceType = options?.sourceType ?? "excel_upload";
   const sourceKey = options?.sourceKey ?? `${path.basename(filePath)}:${fileHash(filePath)}`;
@@ -637,22 +701,23 @@ export async function importSalesWorkbook(
 
   for (let rowNumber = 2; rowNumber <= sheet.length; rowNumber += 1) {
     const row = sheet[rowNumber - 1];
-    const soldAt = toDate(cell(row, 11));
+    const soldAt = toDate(salesCell(row, header, "soldAt"));
     if (!soldAt) {
       if (rowHasAnyValue(row)) ignore("fecha_venta_faltante");
       continue;
     }
-    const rawAdvisor = text(row, 13);
-    const value = number(row, 10);
+    const rawAdvisor = salesText(row, header, "advisor");
+    const value = salesNumber(row, header, "value");
     const advisorValue = advisorForSale({
       rawAdvisor,
-      clientName: text(row, 4),
-      clientLastName: text(row, 5),
-      planName: text(row, 7),
+      rawBranch: salesText(row, header, "branch"),
+      clientName: salesText(row, header, "firstName"),
+      clientLastName: salesText(row, header, "lastName"),
+      planName: salesText(row, header, "description"),
       value,
       soldAt
     });
-    const branchName = branchForAdvisor(text(row, 1), advisorValue, soldAt);
+    const branchName = branchForAdvisor(salesText(row, header, "branch"), advisorValue, soldAt);
     const year = soldAt.getFullYear();
     const month = soldAt.getMonth() + 1;
     const day = soldAt.getDate();
@@ -664,7 +729,7 @@ export async function importSalesWorkbook(
       month,
       day,
       value,
-      quantity: number(row, 9) || 1,
+      quantity: salesNumber(row, header, "quantity") || 1,
       rawAdvisor,
       advisorValue,
       branchName
@@ -696,24 +761,25 @@ export async function importSalesWorkbook(
       .sort((a, b) => b.sales - a.sales || b.rows - a.rows || a.advisor.localeCompare(b.advisor))[0]?.advisor;
     const shouldReassign = parsed.value > 0 && unassignedAdvisor(parsed.advisorValue) && topAdvisor;
     const assignedAdvisor = shouldReassign ? topAdvisor : parsed.advisorValue;
-    const branchId = await ensureBranch(branchForAdvisor(text(parsed.row, 1), assignedAdvisor, parsed.soldAt));
+    const branchId = await ensureBranch(branchForAdvisor(salesText(parsed.row, header, "branch"), assignedAdvisor, parsed.soldAt));
     const advisorId = await ensureAdvisor(assignedAdvisor, branchId, parsed.soldAt);
-    const planId = await ensurePlan(text(parsed.row, 7), { source: "Ventas" });
+    const planId = await ensurePlan(salesText(parsed.row, header, "description"), { source: "Ventas" });
     const payload = {
-      sede: text(parsed.row, 1),
-      tipo: text(parsed.row, 2),
-      id: text(parsed.row, 3),
-      nombre: text(parsed.row, 4),
-      apellido: text(parsed.row, 5),
-      item: text(parsed.row, 6),
-      descripcion: text(parsed.row, 7),
-      inicio: cell(parsed.row, 8),
-      metodoPago: text(parsed.row, 12),
+      sede: salesText(parsed.row, header, "branch"),
+      tipo: salesText(parsed.row, header, "type"),
+      id: salesText(parsed.row, header, "id"),
+      idVenta: salesText(parsed.row, header, "saleId"),
+      nombre: salesText(parsed.row, header, "firstName"),
+      apellido: salesText(parsed.row, header, "lastName"),
+      item: salesText(parsed.row, header, "item"),
+      descripcion: salesText(parsed.row, header, "description"),
+      inicio: salesCell(parsed.row, header, "startedAt"),
+      metodoPago: salesText(parsed.row, header, "paymentMethod"),
       asesor: parsed.rawAdvisor,
       asesor_asignado: shouldReassign ? topAdvisor : canonicalAdvisor(assignedAdvisor),
       turno_asignacion: saleTurn(parsed.soldAt),
       ajuste_asesor: shouldReassign ? "Reasignado por regla: mayor venta de la sede en el dia y turno" : "",
-      origen: text(parsed.row, 14)
+      origen: salesText(parsed.row, header, "origin")
     };
     if (shouldReassign) advisorReassignments += 1;
     months.set(`${parsed.year}-${parsed.month}`, { year: parsed.year, month: parsed.month });
@@ -1016,6 +1082,7 @@ export async function importSalesObjects(
     }
     const advisorValue = advisorForSale({
       rawAdvisor: pickObjectValue(item, advisorFields),
+      rawBranch: pickObjectValue(item, branchFields),
       clientName: pickObjectValue(item, clientNameFields),
       clientLastName: pickObjectValue(item, clientLastNameFields),
       planName: pickObjectValue(item, planFields),

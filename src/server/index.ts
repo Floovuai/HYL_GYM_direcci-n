@@ -1,13 +1,15 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
+import os from "node:os";
 import compression from "compression";
 import cors from "cors";
 import express from "express";
 import multer from "multer";
 import { loadLocalEnv, resolveFromRoot } from "./env";
 import { migrate } from "./schema";
-import { all, get, run, saveDb, scalar, transaction } from "./db";
+import { all, get, openDb, run, saveDb, scalar, transaction } from "./db";
+import { getStateEntry } from "./lib/stateCache";
 import {
   canonicalBranch,
   importMemberEvolutionWorkbook,
@@ -16,6 +18,7 @@ import {
   seedDefaults,
   updateEvaluation
 } from "./importers";
+import { buildEvolutionOverview, importEvolutionMonth, seedEvolutionHistory } from "./evolution";
 import { createManagerPdf } from "./pdfReport";
 import { advisorSalesHistory, buildAppState, buildManagerReport, buildQualityReport } from "./queries";
 import { normalizeKey } from "../shared/business";
@@ -67,7 +70,13 @@ let experienceCache: { data: unknown; generatedAt: number } | null = null;
 let experienceRefreshPromise: Promise<unknown> | null = null;
 
 app.use(cors());
-app.use(compression());
+// El canal SSE no se comprime: el buffer de compresion retiene los eventos.
+app.use(compression({
+  filter: (req, res) => {
+    if (req.path === "/api/events" || String(req.headers.accept || "").includes("text/event-stream")) return false;
+    return compression.filter(req, res);
+  }
+}));
 app.use(express.json({ limit: "3mb" }));
 app.use(express.urlencoded({ extended: false, limit: "32kb" }));
 
@@ -141,42 +150,103 @@ function loginHtml(error = "") {
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#0b0d0f" />
     <title>Acceso DashCom</title>
+    <link rel="icon" href="/icons/icon.svg" type="image/svg+xml" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@700;800&family=Public+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
     <style>
-      body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #f4f7f3; color: #111827; font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-      main { width: min(92vw, 390px); background: #fff; border: 1px solid #d8ded6; border-radius: 10px; padding: 28px; box-shadow: 0 14px 42px rgba(17,24,39,.08); }
-      h1 { margin: 0 0 8px; font-size: 24px; }
-      p { margin: 0 0 22px; color: #4b5563; }
-      label { display: block; margin: 14px 0 6px; font-weight: 700; }
-      input { width: 100%; box-sizing: border-box; border: 1px solid #cfd6df; border-radius: 8px; padding: 11px 12px; font: inherit; }
-      button { width: 100%; margin-top: 20px; border: 0; border-radius: 8px; padding: 12px; background: #147d72; color: #fff; font-weight: 800; cursor: pointer; }
-      .error { margin-top: 14px; color: #b91c1c; font-weight: 700; }
-      small { display: block; margin-top: 18px; color: #6b7280; line-height: 1.4; }
+      :root { color-scheme: dark; font-family: "Public Sans", -apple-system, BlinkMacSystemFont, system-ui, "Segoe UI", sans-serif; color: #f1f3f5; background: #0b0d0f; }
+      * { box-sizing: border-box; }
+      body { margin: 0; min-height: 100vh; min-height: 100dvh; display: flex; background: #0b0d0f; -webkit-font-smoothing: antialiased; }
+      .stage { position: relative; flex: 1 1 auto; min-width: 0; overflow: hidden; }
+      .stage > svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+      .veil { position: absolute; inset: 0; background: linear-gradient(180deg, rgba(11,13,15,.94) 0%, rgba(11,13,15,.58) 46%, rgba(11,13,15,0) 72%); }
+      .copy { position: absolute; left: 64px; top: 64px; right: 56px; max-width: 620px; }
+      .lockup { display: flex; align-items: center; gap: 14px; }
+      .lockup .mark { flex: 0 0 auto; }
+      .lockup strong { display: block; font: 800 24px/1 "Manrope", sans-serif; letter-spacing: -.03em; color: #fff; }
+      .lockup span { display: block; margin-top: 4px; font-size: 10px; font-weight: 700; letter-spacing: .15em; text-transform: uppercase; color: #9ba3ab; }
+      .copy h2 { margin: 56px 0 0; font: 800 46px/1.1 "Manrope", sans-serif; letter-spacing: -.035em; }
+      .copy p { margin: 22px 0 0; max-width: 460px; font-size: 17px; line-height: 1.55; color: #9ba3ab; }
+      .bb { transform-box: fill-box; transform-origin: 50% 100%; animation: dcbb 6s ease-in-out infinite alternate; }
+      @keyframes dcbb { from { transform: scaleY(.62); } to { transform: scaleY(1); } }
+      .panel { flex: 0 0 520px; display: flex; align-items: center; justify-content: center; padding: 48px; background: #111316; border-left: 1px solid #1f2328; }
+      form { width: min(100%, 360px); }
+      h1 { margin: 0 0 7px; font: 800 27px/1.25 "Manrope", sans-serif; letter-spacing: -.02em; }
+      p.lead { margin: 0 0 26px; color: #9ba3ab; font-size: 14px; line-height: 1.5; }
+      label { display: block; margin: 17px 0 7px; color: #c7ccd1; font-size: 13px; font-weight: 600; }
+      input { display: block; width: 100%; min-height: 44px; padding: 10px 12px; border: 1px solid #363b42; border-radius: 9px; background: #1a1d21; color: #f1f3f5; font: inherit; outline: none; transition: border-color .15s, box-shadow .15s; }
+      input:hover { border-color: #58616b; }
+      input:focus-visible { border-color: #33e6a4; box-shadow: 0 0 0 3px rgba(51,230,164,.28); }
+      .password-field { position: relative; }
+      .password-field input { padding-right: 86px; }
+      .password-toggle { position: absolute; top: 4px; right: 5px; width: auto; min-height: 36px; margin: 0; padding: 0 10px; border: 0; border-radius: 6px; background: transparent; color: #c7ccd1; font: 600 12px "Public Sans", sans-serif; box-shadow: none; cursor: pointer; }
+      .password-toggle:hover { background: #2a2e34; color: #fff; box-shadow: none; }
+      .password-toggle:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(51,230,164,.28); }
+      button[type="submit"] { width: 100%; min-height: 46px; margin-top: 26px; border: 0; border-radius: 9px; background: linear-gradient(135deg, #eef1f4, #a9b2bc); color: #1c2126; font: 700 15px "Public Sans", sans-serif; box-shadow: 0 1px 0 rgba(255,255,255,.5) inset, 0 4px 10px rgba(0,0,0,.3); cursor: pointer; transition: background .15s, box-shadow .15s, transform .1s; }
+      button[type="submit"]:hover { background: linear-gradient(135deg, #f5f7f9, #b7c0c9); box-shadow: 0 1px 0 rgba(255,255,255,.6) inset, 0 6px 14px rgba(0,0,0,.38); }
+      button[type="submit"]:active { transform: translateY(1px); }
+      button[type="submit"]:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(51,230,164,.28); }
+      .error { margin-top: 16px; padding: 10px 12px; border: 1px solid #4d2620; border-radius: 8px; background: #3a1712; color: #ff8b80; font-size: 13px; line-height: 1.4; }
+      .foot { margin-top: 22px; font-size: 12px; color: #6f7780; }
+      .panel .lockup { display: none; margin-bottom: 26px; }
+      @media (max-width: 1040px) {
+        .stage { display: none; }
+        .panel { flex: 1 1 auto; border-left: 0; background: #0b0d0f; padding: 32px 24px; }
+        .panel .lockup { display: flex; }
+      }
+      @media (prefers-reduced-motion: reduce) { .bb { animation: none; } }
     </style>
   </head>
   <body>
-    <main>
-      <h1>DashCom</h1>
-      <p>Ingresa tus credenciales para ver la plataforma.</p>
+    <div class="stage">
+      <svg viewBox="0 0 900 1000" preserveAspectRatio="xMidYMid slice" aria-hidden="true"><defs><linearGradient id="dcbm" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#33e6a4" stop-opacity="0.40"/><stop offset="1" stop-color="#33e6a4" stop-opacity="0.02"/></linearGradient><linearGradient id="dcbs" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#eef1f4" stop-opacity="0.15"/><stop offset="1" stop-color="#eef1f4" stop-opacity="0.01"/></linearGradient><radialGradient id="dcbg" cx="0.5" cy="1" r="0.8"><stop offset="0" stop-color="#33e6a4" stop-opacity="0.10"/><stop offset="1" stop-color="#33e6a4" stop-opacity="0"/></radialGradient></defs><rect width="900" height="1000" fill="#0b0d0f"/><rect width="900" height="1000" fill="url(#dcbg)"/><line x1="0" y1="930" x2="900" y2="930" stroke="#ffffff" stroke-opacity="0.03"/><line x1="0" y1="860" x2="900" y2="860" stroke="#ffffff" stroke-opacity="0.03"/><line x1="0" y1="790" x2="900" y2="790" stroke="#ffffff" stroke-opacity="0.03"/><line x1="0" y1="720" x2="900" y2="720" stroke="#ffffff" stroke-opacity="0.03"/><line x1="0" y1="650" x2="900" y2="650" stroke="#ffffff" stroke-opacity="0.03"/><line x1="0" y1="580" x2="900" y2="580" stroke="#ffffff" stroke-opacity="0.03"/><line x1="0" y1="510" x2="900" y2="510" stroke="#ffffff" stroke-opacity="0.03"/><line x1="0" y1="440" x2="900" y2="440" stroke="#ffffff" stroke-opacity="0.03"/><line x1="0" y1="370" x2="900" y2="370" stroke="#ffffff" stroke-opacity="0.03"/><line x1="0" y1="300" x2="900" y2="300" stroke="#ffffff" stroke-opacity="0.03"/><line x1="0" y1="230" x2="900" y2="230" stroke="#ffffff" stroke-opacity="0.03"/><line x1="0" y1="160" x2="900" y2="160" stroke="#ffffff" stroke-opacity="0.03"/><line x1="0" y1="90" x2="900" y2="90" stroke="#ffffff" stroke-opacity="0.03"/><line x1="0" y1="20" x2="900" y2="20" stroke="#ffffff" stroke-opacity="0.03"/><g class="bb" style="animation-delay:-7.0s"><rect x="5" y="739" width="22" height="261" rx="6" fill="url(#dcbm)"/><rect x="5" y="739" width="22" height="3" rx="1.5" fill="#33e6a4"/></g><g class="bb" style="animation-delay:-3.0s"><rect x="45" y="726" width="22" height="274" rx="6" fill="url(#dcbm)"/><rect x="45" y="726" width="22" height="3" rx="1.5" fill="#33e6a4"/></g><g class="bb" style="animation-delay:-10.0s"><rect x="85" y="761" width="22" height="239" rx="6" fill="url(#dcbm)"/><rect x="85" y="761" width="22" height="3" rx="1.5" fill="#33e6a4"/></g><g class="bb" style="animation-delay:-7.0s"><rect x="125" y="670" width="22" height="330" rx="6" fill="url(#dcbs)"/></g><g class="bb" style="animation-delay:-11.0s"><rect x="165" y="713" width="22" height="287" rx="6" fill="url(#dcbs)"/></g><g class="bb" style="animation-delay:-6.0s"><rect x="205" y="641" width="22" height="359" rx="6" fill="url(#dcbm)"/><rect x="205" y="641" width="22" height="3" rx="1.5" fill="#33e6a4"/></g><g class="bb" style="animation-delay:-9.5s"><rect x="245" y="568" width="22" height="432" rx="6" fill="url(#dcbm)"/><rect x="245" y="568" width="22" height="3" rx="1.5" fill="#33e6a4"/></g><g class="bb" style="animation-delay:-8.0s"><rect x="285" y="612" width="22" height="388" rx="6" fill="url(#dcbm)"/><rect x="285" y="612" width="22" height="3" rx="1.5" fill="#33e6a4"/></g><g class="bb" style="animation-delay:-3.5s"><rect x="325" y="704" width="22" height="296" rx="6" fill="url(#dcbs)"/></g><g class="bb" style="animation-delay:-5.0s"><rect x="365" y="595" width="22" height="405" rx="6" fill="url(#dcbm)"/><rect x="365" y="595" width="22" height="3" rx="1.5" fill="#33e6a4"/></g><g class="bb" style="animation-delay:-8.0s"><rect x="405" y="610" width="22" height="390" rx="6" fill="url(#dcbm)"/><rect x="405" y="610" width="22" height="3" rx="1.5" fill="#33e6a4"/></g><g class="bb" style="animation-delay:0.0s"><rect x="445" y="634" width="22" height="366" rx="6" fill="url(#dcbs)"/></g><g class="bb" style="animation-delay:-4.0s"><rect x="485" y="544" width="22" height="456" rx="6" fill="url(#dcbm)"/><rect x="485" y="544" width="22" height="3" rx="1.5" fill="#33e6a4"/></g><g class="bb" style="animation-delay:-1.0s"><rect x="525" y="577" width="22" height="423" rx="6" fill="url(#dcbm)"/><rect x="525" y="577" width="22" height="3" rx="1.5" fill="#33e6a4"/></g><g class="bb" style="animation-delay:-3.5s"><rect x="565" y="510" width="22" height="490" rx="6" fill="url(#dcbm)"/><rect x="565" y="510" width="22" height="3" rx="1.5" fill="#33e6a4"/></g><g class="bb" style="animation-delay:-9.0s"><rect x="605" y="532" width="22" height="468" rx="6" fill="url(#dcbs)"/></g><g class="bb" style="animation-delay:-4.5s"><rect x="645" y="473" width="22" height="527" rx="6" fill="url(#dcbm)"/><rect x="645" y="473" width="22" height="3" rx="1.5" fill="#33e6a4"/></g><g class="bb" style="animation-delay:-10.5s"><rect x="685" y="529" width="22" height="471" rx="6" fill="url(#dcbm)"/><rect x="685" y="529" width="22" height="3" rx="1.5" fill="#33e6a4"/></g><g class="bb" style="animation-delay:-0.5s"><rect x="725" y="585" width="22" height="415" rx="6" fill="url(#dcbs)"/></g><g class="bb" style="animation-delay:-6.0s"><rect x="765" y="488" width="22" height="512" rx="6" fill="url(#dcbm)"/><rect x="765" y="488" width="22" height="3" rx="1.5" fill="#33e6a4"/></g><g class="bb" style="animation-delay:-3.0s"><rect x="805" y="484" width="22" height="516" rx="6" fill="url(#dcbm)"/><rect x="805" y="484" width="22" height="3" rx="1.5" fill="#33e6a4"/></g><g class="bb" style="animation-delay:-1.0s"><rect x="845" y="406" width="22" height="594" rx="6" fill="url(#dcbs)"/></g><g class="bb" style="animation-delay:-6.5s"><rect x="885" y="477" width="22" height="523" rx="6" fill="url(#dcbs)"/></g><line x1="0" y1="420" x2="900" y2="420" stroke="#f5b944" stroke-opacity="0.5" stroke-width="1.5" stroke-dasharray="8 10"/></svg>
+      <div class="veil"></div>
+      <div class="copy">
+        <div class="lockup"><svg class="mark" width="46" height="46" viewBox="0 0 64 64" aria-hidden="true"><defs><linearGradient id="dcm" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#eef1f4"/><stop offset="1" stop-color="#a9b2bc"/></linearGradient></defs><path d="M15 11 H30 A21 21 0 0 1 30 53 H15 Z" fill="none" stroke="url(#dcm)" stroke-width="5.5" stroke-linejoin="round"/><polyline points="21,41 28,33.5 33.5,37.5 42,27" fill="none" stroke="#33e6a4" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/><circle cx="42" cy="27" r="3.6" fill="#33e6a4"/></svg><div><strong>DashCom</strong><span>Dashboard Comercial</span></div></div>
+        <h2>Tu operación comercial,<br />sede por sede.</h2>
+        <p>Ventas, metas, comisiones y proyección del mes en un solo tablero.</p>
+      </div>
+    </div>
+    <div class="panel">
       <form method="post" action="/login">
+        <div class="lockup"><svg class="mark" width="46" height="46" viewBox="0 0 64 64" aria-hidden="true"><defs><linearGradient id="dcm2" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#eef1f4"/><stop offset="1" stop-color="#a9b2bc"/></linearGradient></defs><path d="M15 11 H30 A21 21 0 0 1 30 53 H15 Z" fill="none" stroke="url(#dcm2)" stroke-width="5.5" stroke-linejoin="round"/><polyline points="21,41 28,33.5 33.5,37.5 42,27" fill="none" stroke="#33e6a4" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/><circle cx="42" cy="27" r="3.6" fill="#33e6a4"/></svg><div><strong>DashCom</strong><span>Dashboard Comercial</span></div></div>
+        <h1>Iniciar sesión</h1>
+        <p class="lead">Ingresa tus credenciales para acceder a DashCom.</p>
         <label for="username">Usuario</label>
-        <input id="username" name="username" autocomplete="username" required />
+        <input id="username" name="username" autocomplete="username" autofocus required />
         <label for="password">Contraseña</label>
-        <input id="password" name="password" type="password" autocomplete="current-password" required />
+        <div class="password-field">
+          <input id="password" name="password" type="password" autocomplete="current-password" required />
+          <button class="password-toggle" type="button" aria-label="Mostrar contraseña" aria-pressed="false">Mostrar</button>
+        </div>
         <button type="submit">Entrar</button>
-        ${error ? `<div class="error">${error}</div>` : ""}
+        ${error ? `<div class="error" role="alert">${error}</div>` : ""}
+        <div class="foot">DashCom Desktop</div>
       </form>
-      <small>La sesion usa cookie httpOnly y expira automaticamente.</small>
-    </main>
+    </div>
+    <script>
+      const toggle = document.querySelector(".password-toggle");
+      const password = document.getElementById("password");
+      toggle.addEventListener("click", () => {
+        const visible = password.type === "password";
+        password.type = visible ? "text" : "password";
+        toggle.textContent = visible ? "Ocultar" : "Mostrar";
+        toggle.setAttribute("aria-label", visible ? "Ocultar contraseña" : "Mostrar contraseña");
+        toggle.setAttribute("aria-pressed", String(visible));
+      });
+    </script>
   </body>
 </html>`;
 }
-
 function isPublicAppShellAsset(pathname: string) {
   return (
     pathname === "/sw.js" ||
     pathname === "/manifest.webmanifest" ||
     pathname === "/favicon.ico" ||
+    pathname === "/og-dashcom.png" ||
     pathname.startsWith("/icons/") ||
     pathname.startsWith("/assets/")
   );
@@ -336,8 +406,12 @@ app.use((req, res, next) => {
   res.setHeader("X-Frame-Options", "DENY");
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("Referrer-Policy", "same-origin");
+  // Por defecto las respuestas de la API se revalidan siempre; cada ruta puede afinarlo.
+  if (req.path.startsWith("/api/")) res.setHeader("Cache-Control", "no-cache");
   if (
     req.path === "/api/health" ||
+    req.path === "/api/ping" ||
+    req.path === "/api/consulta-links" ||
     req.path === "/login" ||
     req.path === "/logout" ||
     req.path === "/consulta" ||
@@ -357,6 +431,42 @@ app.use((req, res, next) => {
     return;
   }
   res.status(401).type("html").send(loginHtml());
+});
+
+function consultaNetworkLinks(req: express.Request) {
+  const protocol = req.protocol || "http";
+  const currentOrigin = `${protocol}://${req.get("host")}`;
+  const configuredPublicUrl = String(process.env.CONSULTA_PUBLIC_URL || "").trim();
+  let configuredHost = "";
+  try {
+    configuredHost = new URL(configuredPublicUrl).hostname;
+  } catch {
+    // La configuracion opcional puede estar vacia o mal formada.
+  }
+  const configuredIsLocalAddress = /^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/i.test(configuredHost);
+  const interfaces = os.networkInterfaces();
+  const network = Object.entries(interfaces)
+    .flatMap(([name, rows]) => (rows || []).map((row) => ({ ...row, name })))
+    .filter((row) => row.family === "IPv4" && !row.internal)
+    .filter((row) => /^10\.|^192\.168\.|^172\.(1[6-9]|2\d|3[01])\./.test(row.address))
+    .filter((row) => !/docker|wsl|vethernet|hyper-v/i.test(row.name))
+    .map((row) => ({
+      label: row.name,
+      url: `${protocol}://${row.address}:${port}/consulta`
+    }))
+    .sort((left, right) => Number(right.url.includes("192.168.")) - Number(left.url.includes("192.168.")));
+  const isLocalhost = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(currentOrigin);
+  return {
+    current: `${currentOrigin}/consulta`,
+    network,
+    recommended: configuredPublicUrl && !configuredIsLocalAddress
+      ? configuredPublicUrl
+      : (isLocalhost && network[0] ? network[0].url : `${currentOrigin}/consulta`)
+  };
+}
+
+app.get("/api/consulta-links", (req, res) => {
+  res.json(consultaNetworkLinks(req));
 });
 
 function evoSalesUrl(baseUrl: string, year: number, month: number, skip: number, day?: number) {
@@ -2244,6 +2354,12 @@ async function refreshExperienceCache() {
   return experienceRefreshPromise;
 }
 
+// Sonda ligera para el arranque de escritorio: no toca la base de datos.
+app.get("/api/ping", (_req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.json({ ok: true });
+});
+
 app.get("/api/health", async (_req, res, next) => {
   try {
     const sales = await scalar<number>("SELECT COUNT(*) FROM sales");
@@ -2288,13 +2404,20 @@ app.get("/api/experience", async (req, res, next) => {
 
 app.get("/api/state", async (req, res, next) => {
   try {
-    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
-    res.setHeader("Pragma", "no-cache");
-    res.setHeader("Expires", "0");
-    res.setHeader("Surrogate-Control", "no-store");
     const year = req.query.year ? Number(req.query.year) : undefined;
     const month = req.query.month ? Number(req.query.month) : undefined;
-    res.json(await buildAppState(year, month));
+    const startedAt = Date.now();
+    const { entry, hit } = await getStateEntry(buildAppState, year, month);
+    // "no-cache" obliga a revalidar con ETag: los datos nunca se sirven viejos,
+    // pero si no cambiaron la respuesta es un 304 sin cuerpo.
+    res.setHeader("Cache-Control", "private, no-cache");
+    res.setHeader("ETag", entry.etag);
+    res.setHeader("Server-Timing", `state;dur=${Date.now() - startedAt};desc="${hit ? "cache" : "calculo"}", build;dur=${entry.buildMs}`);
+    if (req.headers["if-none-match"] === entry.etag) {
+      res.status(304).end();
+      return;
+    }
+    res.type("application/json").send(entry.json);
   } catch (error) {
     next(error);
   }
@@ -2309,7 +2432,10 @@ app.get("/api/events", (req, res) => {
   });
   res.write(`event: connected\ndata: ${JSON.stringify({ ok: true, now: new Date().toISOString() })}\n\n`);
   realtimeClients.add(res);
+  // Latido: evita que proxies o el sistema cierren un canal inactivo.
+  const heartbeat = setInterval(() => res.write(": ping\n\n"), 25_000);
   req.on("close", () => {
+    clearInterval(heartbeat);
     realtimeClients.delete(res);
   });
 });
@@ -2688,6 +2814,7 @@ async function queryUserPublicRow(row: Record<string, any>) {
     advisorName: row.advisor_name ?? null,
     branchId: row.branch_id ? Number(row.branch_id) : null,
     branchName: row.branch_name ?? null,
+    pinPlain: row.pin_plain ?? null,
     active: Number(row.active) === 1,
     lastLoginAt: row.last_login_at ?? null,
     createdAt: row.created_at
@@ -2731,9 +2858,9 @@ app.post("/api/query-users", async (req, res, next) => {
     const pinHash = hashPin(pin, salt);
 
     await run(
-      `INSERT INTO query_users (name, username, normalized_username, role, advisor_id, branch_id, pin_hash, pin_salt)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [name, usernameInput, normalized, role, role === "asesor" ? advisorId : null, role === "lider_sede" ? branchId : null, pinHash, salt]
+      `INSERT INTO query_users (name, username, normalized_username, role, advisor_id, branch_id, pin_hash, pin_salt, pin_plain)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [name, usernameInput, normalized, role, role === "asesor" ? advisorId : null, role === "lider_sede" ? branchId : null, pinHash, salt, pin]
     );
     const id = Number(await scalar("SELECT last_insert_rowid()"));
     const row = await get<Record<string, any>>(
@@ -2793,7 +2920,7 @@ app.post("/api/query-users/:id/regenerate-pin", async (req, res, next) => {
     const pin = generatePin();
     const salt = crypto.randomBytes(8).toString("hex");
     const pinHash = hashPin(pin, salt);
-    await run("UPDATE query_users SET pin_hash = ?, pin_salt = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", [pinHash, salt, id]);
+    await run("UPDATE query_users SET pin_hash = ?, pin_salt = ?, pin_plain = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", [pinHash, salt, pin, id]);
     res.json({ ok: true, pin });
   } catch (error) {
     next(error);
@@ -2905,12 +3032,10 @@ app.get("/api/panel/branch", async (req, res, next) => {
     const state = await buildAppState(year, month);
     const branch = state.branches.find((item: any) => Number(item.id) === session.branch_id);
     if (!branch) throw httpError("No hay datos para esta sede todavia.", 404, "DC-QU-BRANCH-404");
-    const advisors = state.advisors.filter((item: any) => Number(item.branchId) === session.branch_id);
     const lastUpdatedAt = await scalar<string>("SELECT MAX(created_at) FROM sales WHERE branch_id = ?", [session.branch_id]);
     res.json({
       period: { year: state.filters.selectedYear, month: state.filters.selectedMonth, label: state.filters.selectedMonthName, years: state.filters.years },
       branch,
-      advisors,
       lastUpdatedAt: lastUpdatedAt ?? null
     });
   } catch (error) {
@@ -2940,6 +3065,40 @@ app.post("/api/import/sales-excel", upload.single("file"), async (req, res, next
     });
     res.json({ ok: true, summary });
   } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/evolution", async (_req, res, next) => {
+  try {
+    res.setHeader("Cache-Control", "no-store");
+    res.json(await buildEvolutionOverview());
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/evolution/upload", upload.array("file", 12), async (req, res, next) => {
+  const files = (req.files as Express.Multer.File[] | undefined) ?? [];
+  try {
+    if (!files.length) throw httpError("Archivo Excel requerido");
+    for (const file of files) ensureExcelUpload(file);
+    const year = Number(req.body?.year) || undefined;
+    const month = Number(req.body?.month) || undefined;
+    if (month && files.length > 1) {
+      throw httpError("Para cargar varios archivos a la vez deja el mes en automatico: se detecta por el nombre de cada archivo.");
+    }
+    const summaries = [];
+    for (const file of files) {
+      const originalName = file.originalname || "evolucion.xlsx";
+      const target = path.join(uploadDir, `${Date.now()}-${originalName.replace(/[^\w.\- ]+/g, "_")}`);
+      fs.renameSync(file.path, target);
+      summaries.push(await importEvolutionMonth(target, originalName, { year, month }));
+    }
+    publishRealtime("evolution_updated", { source: "evolution_upload", months: summaries.map((item) => item.monthLabel) });
+    res.json({ ok: true, summaries });
+  } catch (error) {
+    for (const file of files) fs.rmSync(file.path, { force: true });
     next(error);
   }
 });
@@ -3065,7 +3224,7 @@ app.post("/api/ai/ask", async (req, res, next) => {
     const aiMemory = await recentAiMemory(year, month);
     const contexto = compactAiContext(state, aiMemory, { lite: mode === "chat" });
     const snapshotId = await saveAiContextSnapshot(year, month, { prompt, conversation, contexto });
-    const chatMaxTokens = mode === "chat" ? 500 : 900;
+    const chatMaxTokens = mode === "chat" ? 1200 : 900;
     let response;
     let json;
     try {
@@ -3073,7 +3232,7 @@ app.post("/api/ai/ask", async (req, res, next) => {
         {
           role: "system",
           content:
-            "Eres AI-sistente DashCom, el chat conversacional de DashCom. Responde en espanol claro y natural. Mantén continuidad con los mensajes previos. No conviertas un saludo o una charla simple en reporte. Si el usuario pide datos, responde unicamente con el contexto autorizado incluido abajo. No inventes cifras, nombres, monedas, causas, recomendaciones ni estados. La moneda de DashCom es COP/pesos colombianos: nunca escribas USD salvo que el usuario lo pida. Cuando exista un valor formateado, usa ese texto tal cual para citar cifras y evita recalcularlo. No menciones nombres tecnicos de campos, llaves JSON, variables internas ni textos como totalSalesFormatted salvo que el usuario pida debug. Si devuelves varios datos comparables, usa una tabla Markdown corta con encabezados claros. Si falta informacion, di exactamente que no esta disponible en la plataforma o que debe cargarse/configurarse. Cuando cites cifras, aclara el periodo."
+            "Eres el director comercial IA de DashCom. Asesora con criterio ejecutivo sobre cualquier rubro: ingresos, conversión, precios, márgenes, retención, productividad, canales y rentabilidad. Responde en español claro, mantén el hilo de la conversación y adapta la profundidad a la pregunta. En chat usa como máximo 180 palabras salvo que el usuario pida un informe extenso; responde directamente, sin listar todos los KPI primero ni abrir tablas innecesarias. Basa todo diagnóstico de esta empresa en el contexto autorizado, citando el periodo de cada cifra; la moneda es COP y debes usar los valores formateados sin recalcularlos. Puedes proponer prácticas generales de dirección comercial cuando ayuden, pero identifícalas como recomendaciones o hipótesis, nunca como resultados medidos ni como hechos externos comprobados sin una fuente disponible. Propón acciones concretas, priorizadas y medibles, con indicador de éxito y plazo cuando corresponda. No inventes cifras, causas, fuentes, benchmarks ni resultados. Si falta un dato para sostener una conclusión, dilo y explica cómo validarla. No expongas nombres internos de campos o llaves JSON. Para un saludo, responde de forma breve; para comparaciones pedidas explícitamente, usa una tabla Markdown corta."
         },
         {
           role: "user",
@@ -3773,12 +3932,15 @@ app.get("/api/export/gerencial.pdf", async (req, res, next) => {
   }
 });
 
-const clientDist = path.resolve(process.cwd(), "dist", "client");
+const clientDist = resolveFromRoot(process.env.CLIENT_DIST, "./dist/client");
 if (fs.existsSync(clientDist)) {
   app.use(express.static(clientDist, {
     setHeaders(res, filePath) {
       if (filePath.endsWith("index.html") || filePath.endsWith("sw.js") || filePath.endsWith("manifest.webmanifest")) {
         res.setHeader("Cache-Control", "no-store");
+      } else if (/[\\/]assets[\\/]/.test(filePath)) {
+        // Los archivos de assets llevan hash en el nombre: cambian en cada compilacion.
+        res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
       }
     }
   }));
@@ -3827,14 +3989,29 @@ app.use(async (error: unknown, req: express.Request, res: express.Response, _nex
 });
 
 async function bootstrap() {
+  const desktopVersion = String(process.env.DASHCOM_DESKTOP_VERSION || "").replace(/[^a-zA-Z0-9.-]/g, "");
+  const databasePath = resolveFromRoot(process.env.DATABASE_PATH, "./data/hyl_gym.db");
+  if (desktopVersion && fs.existsSync(databasePath)) {
+    const backupDir = path.resolve(path.dirname(databasePath), "..", "backups");
+    const backupPath = path.join(backupDir, `hyl_gym-before-${desktopVersion}.db`);
+    if (!fs.existsSync(backupPath)) {
+      fs.mkdirSync(backupDir, { recursive: true });
+      const database = await openDb();
+      await database.backup(backupPath);
+    }
+  }
   await migrate();
+  await saveDb();
   await transaction(async () => {
     await seedDefaults();
   });
+  await seedEvolutionHistory();
   const sales = (await scalar<number>("SELECT COUNT(*) FROM sales")) ?? 0;
   console.log(`DashCom API lista en http://localhost:${port} (${sales} ventas)`);
   app.listen(port, host, () => {
     startEvoWorker();
+    // Deja el estado del periodo actual calculado antes de la primera consulta.
+    getStateEntry(buildAppState).catch((error) => console.warn("No se pudo precalcular el estado", error instanceof Error ? error.message : error));
   });
 }
 

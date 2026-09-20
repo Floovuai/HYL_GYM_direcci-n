@@ -6,15 +6,20 @@ La instalacion actual opera con datos de HYL Gym como cliente base. Por continui
 
 ## Estado para continuar DashCom
 
-Fecha de actualizacion documental: 2026-09-06.
+Fecha de actualizacion documental: 2026-09-20. Version vigente: 0.1.9 (ver [CHANGELOG.md](CHANGELOG.md)). Guia de velocidad y cache en [docs/PERFORMANCE.md](docs/PERFORMANCE.md).
 
 - Marca visible de la app: `DashCom` en login, encabezado, titulo HTML, chat IA, PDF y logs de backend.
 - Paquete npm: `dashcom`.
 - Arranque Windows actual: `INICIAR_DASHCOM.bat`.
+- Entrega Desktop: instalador NSIS `DashCom-Setup-<version>-x64.exe` (Electron); datos del usuario en `%LOCALAPPDATA%\DashCom`.
 - Base SQLite actual: `data/hyl_gym.db` por compatibilidad con la instalacion HYL.
 - Contenedor Docker actual: `hyl-gym-direccion` por compatibilidad operativa.
 - Puerto por defecto: `4310`.
 - Siguiente proceso recomendado: completar auditoria funcional, fiabilidad de Excel, calidad de datos y version comercial limpia segun `docs/DASHCOM_ROADMAP.md`.
+
+## Actualizaciones de Desktop
+
+Cada actualizacion funcional, visual o correctiva debe entregarse como un nuevo instalador Windows x64 NSIS: `DashCom-Setup-<version>-x64.exe`, en la carpeta del escritorio `Dashcom Desktop`, conservando los datos instalados. El procedimiento obligatorio esta en [docs/DESKTOP_RELEASE.md](docs/DESKTOP_RELEASE.md).
 
 ## Iniciar
 
@@ -78,6 +83,15 @@ La lectura de libros semilla usa hojas por nombre, por lo que integra correctame
 Si EVO esta configurado, un worker interno sincroniza automaticamente el mes actual sin bloquear el tablero. Tambien puede ejecutarse desde `Configuracion > Integraciones`.
 
 El **Tablero** muestra una franja de salud comercial de datos con ventas positivas sin asesor, valor pendiente de asignacion, ultima carga y filas EVO ignoradas. Esto permite corregir comisiones y score sin tocar la estructura historica de `sales`.
+
+## Evolucion (pestana)
+
+La pestana **Evolucion** muestra mes a mes los clientes activos, las entradas y las salidas por sede, con graficos de crecimiento (activos al cierre, entradas vs. salidas, sedes que crecen o caen, mapa de calor por sede y mes) y el detalle completo de cada mes.
+
+- El historico enero-agosto 2026 viene precargado en la aplicacion (`src/server/data/evolutionSeed.ts`). Al iniciar solo se escriben los meses que aun no tienen datos, asi que nunca pisa lo que el usuario haya cargado.
+- `Cargar evolucion` acepta uno o varios Excel de EVO. El mes se detecta por el nombre (`EVOLUCION SEPTIEMBRE 26.xlsx`) o se elige en el selector; volver a cargar un mes lo reemplaza.
+- Cada archivo se valida: `Activo inicio + Total de entradas - Total de salidas = Activos fin` en cada sede.
+- Los datos viven en `evolution_monthly` y son independientes de `member_evolution` (cortes diarios de Sedes/Experiencia).
 
 ## Evolucion de miembros
 

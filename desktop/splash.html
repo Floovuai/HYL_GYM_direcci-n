@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0b0d0f" />
+    <title>DashCom</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@700;800&family=Public+Sans:wght@400;500&display=swap" rel="stylesheet" />
+    <style>
+      :root { color-scheme: dark; background: #0b0d0f; }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        min-height: 100dvh;
+        display: grid;
+        place-items: center;
+        padding: 24px;
+        color: #f1f3f5;
+        background: #0b0d0f;
+        font-family: "Public Sans", "Segoe UI", system-ui, sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+      main { text-align: center; }
+      .brand-icon {
+        display: grid;
+        place-items: center;
+        width: 60px;
+        height: 60px;
+        margin: 0 auto 20px;
+        border-radius: 12px;
+        background: linear-gradient(160deg, #22262b, #0b0d0f);
+        border: 1px solid #2a2e34;
+        box-shadow: 0 8px 22px rgba(0,0,0,.45);
+      }
+      h1 { margin: 0 0 7px; font: 800 27px/1.25 "Manrope", "Segoe UI", sans-serif; }
+      p { margin: 0; color: #9ba3ab; font-size: 14px; }
+      .loader {
+        width: 30px;
+        height: 30px;
+        margin: 26px auto 0;
+        border: 3px solid #363b42;
+        border-top-color: #33e6a4;
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+      }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      @media (prefers-reduced-motion: reduce) { .loader { animation-duration: 2s; } }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="brand-icon" aria-hidden="true">
+        <svg width="38" height="38" viewBox="0 0 64 64" aria-hidden="true">
+          <defs><linearGradient id="dcs" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#eef1f4"/><stop offset="1" stop-color="#a9b2bc"/></linearGradient></defs>
+          <path d="M15 11 H30 A21 21 0 0 1 30 53 H15 Z" fill="none" stroke="url(#dcs)" stroke-width="5.5" stroke-linejoin="round"/>
+          <polyline points="21,41 28,33.5 33.5,37.5 42,27" fill="none" stroke="#33e6a4" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+          <circle cx="42" cy="27" r="3.6" fill="#33e6a4"/>
+        </svg>
+      </div>
+      <h1>DashCom</h1>
+      <p>Iniciando plataforma...</p>
+      <div class="loader" aria-label="Cargando"></div>
+    </main>
+  </body>
+</html>

@@ -2,6 +2,10 @@
 
 Este runbook describe la instalacion actual de DashCom. La app ya se presenta como DashCom, pero la base, el contenedor y algunos scripts internos conservan nombres `hyl_*` por compatibilidad con datos HYL Gym existentes.
 
+## Entregar actualizaciones Desktop
+
+Toda actualizacion de la aplicacion debe incluir el instalador Windows x64 NSIS `DashCom-Setup-<version>-x64.exe`. Seguir [DESKTOP_RELEASE.md](DESKTOP_RELEASE.md) para versionado, empaquetado, QA, preservacion de datos y entrega en la carpeta `Dashcom Desktop` del escritorio.
+
 ## Instalar
 
 ```bash
@@ -340,7 +344,7 @@ Cada consulta guarda:
 
 ## Mejora de velocidad, tiempo real e IA
 
-La version actual ya usa SQLite nativo con `better-sqlite3`, WAL, indices reales, cache de crecimiento por periodo, worker EVO con checkpoint y memoria de IA. Para la siguiente etapa conviene:
+Desde 0.1.9 el estado se sirve desde cache en memoria con ETag y las vistas se cargan bajo demanda; ver [PERFORMANCE.md](PERFORMANCE.md) (incluye como medir con `Server-Timing` y las variables `STATE_CACHE_MAX_AGE_MS`). La version actual ya usa SQLite nativo con `better-sqlite3`, WAL, indices reales, cache de crecimiento por periodo, worker EVO con checkpoint y memoria de IA. Para la siguiente etapa conviene:
 
 - Migrar a Postgres si se requiere multiusuario, nube o concurrencia alta.
 - Expandir cache a KPI por mes/sede/asesor y no solo crecimiento.

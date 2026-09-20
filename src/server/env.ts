@@ -1,8 +1,12 @@
 import fs from "node:fs";
 import path from "node:path";
 
+export function appRoot() {
+  return process.env.APP_ROOT ? path.resolve(process.env.APP_ROOT) : process.cwd();
+}
+
 export function loadLocalEnv() {
-  const file = path.resolve(process.cwd(), ".env");
+  const file = path.resolve(appRoot(), ".env");
   if (!fs.existsSync(file)) return;
   const lines = fs.readFileSync(file, "utf8").split(/\r?\n/);
   for (const line of lines) {
@@ -18,5 +22,5 @@ export function loadLocalEnv() {
 
 export function resolveFromRoot(value: string | undefined, fallback: string) {
   const raw = value || fallback;
-  return path.isAbsolute(raw) ? raw : path.resolve(process.cwd(), raw);
+  return path.isAbsolute(raw) ? raw : path.resolve(appRoot(), raw);
 }

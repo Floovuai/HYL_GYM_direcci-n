@@ -245,6 +245,7 @@ export async function migrate() {
       branch_id INTEGER REFERENCES branches(id),
       pin_hash TEXT NOT NULL,
       pin_salt TEXT NOT NULL,
+      pin_plain TEXT,
       active INTEGER NOT NULL DEFAULT 1,
       last_login_at TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -359,6 +360,31 @@ export async function migrate() {
       UNIQUE(year, month, day, branch_id)
     );
 
+    CREATE TABLE IF NOT EXISTS evolution_monthly (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      year INTEGER NOT NULL,
+      month INTEGER NOT NULL,
+      branch_id INTEGER NOT NULL REFERENCES branches(id),
+      active_start INTEGER NOT NULL DEFAULT 0,
+      new_members INTEGER NOT NULL DEFAULT 0,
+      renewed INTEGER NOT NULL DEFAULT 0,
+      reinscriptions INTEGER NOT NULL DEFAULT 0,
+      returned_from_suspension INTEGER NOT NULL DEFAULT 0,
+      total_entries INTEGER NOT NULL DEFAULT 0,
+      cancellations INTEGER NOT NULL DEFAULT 0,
+      expired INTEGER NOT NULL DEFAULT 0,
+      not_renewed INTEGER NOT NULL DEFAULT 0,
+      suspended INTEGER NOT NULL DEFAULT 0,
+      total_exits INTEGER NOT NULL DEFAULT 0,
+      active_end INTEGER NOT NULL DEFAULT 0,
+      net_evolution INTEGER NOT NULL DEFAULT 0,
+      net_evolution_rate REAL NOT NULL DEFAULT 0,
+      source TEXT NOT NULL DEFAULT 'upload',
+      source_file TEXT,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(year, month, branch_id)
+    );
+
     CREATE TABLE IF NOT EXISTS evo_sync_checkpoints (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       source TEXT NOT NULL DEFAULT 'evo',
@@ -470,6 +496,7 @@ export async function migrate() {
   await ensureColumn("advisors", "inactive_reason", "TEXT DEFAULT ''");
   await ensureColumn("advisors", "updated_at", "TEXT");
   await run("UPDATE advisors SET updated_at = COALESCE(updated_at, created_at, CURRENT_TIMESTAMP)");
+  await ensureColumn("query_users", "pin_plain", "TEXT");
   await ensureColumn("sales", "sale_key", "TEXT");
   await ensureColumn("plans", "external_id", "TEXT");
   await ensureColumn("plans", "membership_type", "TEXT");
@@ -506,6 +533,10 @@ export async function migrate() {
     )
   `);
   await run("CREATE UNIQUE INDEX IF NOT EXISTS idx_sales_sale_key ON sales(sale_key) WHERE sale_key IS NOT NULL");
+  // Indices de cobertura: las agregaciones del estado (anual por asesor, medios de pago,
+  // mensual) se resuelven leyendo solo el indice, sin volver a la tabla.
+  await run("CREATE INDEX IF NOT EXISTS idx_sales_year_advisor_value ON sales(year, advisor_id, value)");
+  await run("CREATE INDEX IF NOT EXISTS idx_sales_period_payment_value ON sales(year, month, payment_method, value)");
   await run(`
     UPDATE advisors
     SET active = 0,

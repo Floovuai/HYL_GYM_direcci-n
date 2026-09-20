@@ -261,13 +261,12 @@ async function buildConfigurationState(year: number, month: number, quality: Any
        b.active,
        b.created_at,
        b.updated_at,
-       COUNT(DISTINCT a.id) advisors_count,
-       COUNT(s.id) sales_rows,
-       COALESCE(SUM(s.value), 0) sales
+       COALESCE(ac.advisors_count, 0) advisors_count,
+       COALESCE(sa.sales_rows, 0) sales_rows,
+       COALESCE(sa.sales, 0) sales
      FROM branches b
-     LEFT JOIN advisors a ON a.branch_id = b.id
-     LEFT JOIN sales s ON s.branch_id = b.id
-     GROUP BY b.id
+     LEFT JOIN (SELECT branch_id, COUNT(*) advisors_count FROM advisors GROUP BY branch_id) ac ON ac.branch_id = b.id
+     LEFT JOIN (SELECT branch_id, COUNT(*) sales_rows, SUM(value) sales FROM sales GROUP BY branch_id) sa ON sa.branch_id = b.id
      ORDER BY b.active DESC, b.display_name`
   );
   const branchTargets2026 = await all<AnyRow>(
@@ -2753,7 +2752,7 @@ async function buildSalesTrends(year: number, month: number) {
   const monthPartRanges: Array<{ part: string; from: number; to: number }> = [
     { part: "Inicio (1-10)", from: 1, to: 10 },
     { part: "Mitad (11-20)", from: 11, to: 20 },
-    { part: "Cierre (21-31)", from: 21, to: daysInSelectedMonth }
+    { part: `Cierre (21-${daysInSelectedMonth})`, from: 21, to: daysInSelectedMonth }
   ];
   const monthPartStats = monthPartRanges.map(({ part, from, to }) => {
     let actual = 0;
@@ -2954,7 +2953,7 @@ async function buildSalesTrends(year: number, month: number) {
     );
   }
   if (bestMonthPart) {
-    const quincenaHint = bestMonthPart.part === "Cierre (21-31)"
+    const quincenaHint = bestMonthPart.part.startsWith("Cierre")
       ? "coincide con el pago de la segunda quincena/nómina de fin de mes"
       : bestMonthPart.part === "Mitad (11-20)"
         ? "coincide con la primera quincena de pago"

@@ -20,8 +20,9 @@ self.addEventListener("message", (event) => {
 });
 
 // DashCom depende de datos y bundles frescos. El service worker conserva la
-// instalacion movil/PWA, pero deja todas las respuestas en manos de la red para
-// que cada despliegue se vea tambien en el acceso movil.
+// instalacion movil/PWA y deja la red y la cache HTTP del navegador decidir:
+// index.html y sw.js salen con no-store, los assets con hash son inmutables y
+// /api/state se revalida con ETag (304 cuando nada cambio). No se fuerza no-store.
 self.addEventListener("fetch", (event) => {
   const request = event.request;
   const url = new URL(request.url);
@@ -29,7 +30,7 @@ self.addEventListener("fetch", (event) => {
   if (request.method !== "GET" || url.origin !== self.location.origin) return;
 
   event.respondWith(
-    fetch(request, { cache: "no-store" }).catch(async () => {
+    fetch(request).catch(async () => {
       if (request.mode === "navigate") {
         return new Response("DashCom necesita conexion para cargar la ultima version.", {
           status: 503,

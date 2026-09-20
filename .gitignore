@@ -9,6 +9,8 @@ tmp/
 output/
 outputs/
 backups/
+desktop-build/
+release/
 .claude/
 .codex_spreadsheet_work/
 

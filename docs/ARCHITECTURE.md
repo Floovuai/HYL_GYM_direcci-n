@@ -45,7 +45,8 @@ La aplicacion esta pensada para operar en un PC o servidor con Docker y exponers
 
 ```text
 src/
-  client/          React SPA (main.tsx) y estilos (styles.css)
+  client/          React SPA: main.tsx (shell), una vista por modulo cargada bajo
+                   demanda (Dashboard, Advisors, Branches, ...), common.tsx y styles.css
   server/          API Express, SQLite, importadores, PDF, worker EVO
     data/          datos estaticos versionados (estacionalidad diaria,
                    seguimiento de sedes agosto 2026) + copias de respaldo
@@ -156,6 +157,8 @@ Configuracion:
 Importacion y EVO:
 
 - `POST /api/import/sales-excel`: importa ventas desde Excel subido.
+- `GET /api/evolution`: cierres mensuales por sede y totales para la pestana Evolucion.
+- `POST /api/evolution/upload`: carga uno o varios Excel mensuales de EVO (`file`, opcional `month`/`year`); reemplaza el mes cargado.
 - `POST /api/import/member-evolution-excel`: importa evolucion mensual de miembros por sede.
 - `POST /api/evo/sync`: sincroniza ventas EVO del periodo indicado o del mes actual.
 - `GET /api/evo/plans` y `POST /api/evo/plans/sync`: catalogo de planes EVO y su sincronizacion.
@@ -250,6 +253,8 @@ Detalle de formulas y niveles en `docs/COMMISSIONS_AND_SCORE.md`.
 La base queda en `data/hyl_gym.db`. `better-sqlite3` opera sobre el archivo real con WAL, `synchronous=NORMAL` y transacciones `BEGIN IMMEDIATE`.
 
 La carga de ventas es incremental: no borra meses existentes. Si una fila ya existe, se omite por `sale_key`; si es nueva, se agrega. `import_batches` conserva auditoria de fuente, filas leidas, insertadas, valor total, duplicadas omitidas y detalle.
+
+El estado de la app (`/api/state`) se cachea en memoria por periodo con ETag (`src/server/lib/stateCache.ts`) y se invalida con la version de datos de `db.ts`; detalle y mediciones en [PERFORMANCE.md](PERFORMANCE.md).
 
 `metric_cache` guarda agregados costosos por periodo, empezando por el modulo de crecimiento. La version del cache se deriva de conteo, suma, max id y fecha maxima de ventas del periodo; si entra una venta nueva, se recalcula.
 

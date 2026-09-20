@@ -85,6 +85,18 @@ Estos diagnosticos no modifican las tablas historicas. Sirven para corregir asig
 
 La tabla permite calcular churn directo, salida bruta, retencion y evolucion neta sin alterar `sales`.
 
+## Evolucion mensual (pestana Evolucion)
+
+`evolution_monthly` guarda el cierre mensual por sede tal como lo exporta EVO, con `UNIQUE(year, month, branch_id)`:
+
+- `active_start + total_entries - total_exits = active_end` (se valida al cargar).
+- `total_entries = new_members + renewed + reinscriptions + returned_from_suspension`.
+- `total_exits = cancellations + expired + not_renewed + suspended`.
+- `net_evolution = active_end - active_start`; el % se calcula sobre `active_start`, y el `active_start` de un mes es el `active_end` del anterior.
+- `source` es `seed` (historico incluido en el instalador) o `upload` (cargado por el usuario). El arranque solo siembra meses sin filas.
+
+Es independiente de `member_evolution`, que conserva los cortes diarios usados por Sedes y Experiencia.
+
 ## Semillas
 
 - Ventas reales junio 2026: `VENTAS GENERALES.xlsx`.
