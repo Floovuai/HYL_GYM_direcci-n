@@ -6,7 +6,7 @@ La instalacion actual opera con datos de HYL Gym como cliente base. Por continui
 
 ## Estado para continuar DashCom
 
-Fecha de actualizacion documental: 2026-09-20. Version vigente: 0.1.10 (ver [CHANGELOG.md](CHANGELOG.md)). Guia de velocidad y cache en [docs/PERFORMANCE.md](docs/PERFORMANCE.md).
+Fecha de actualizacion documental: 2026-09-20. Version vigente: 0.1.11 (ver [CHANGELOG.md](CHANGELOG.md)). Guia de velocidad y cache en [docs/PERFORMANCE.md](docs/PERFORMANCE.md).
 
 - Marca visible de la app: `DashCom` en login, encabezado, titulo HTML, chat IA, PDF y logs de backend.
 - Paquete npm: `dashcom`.

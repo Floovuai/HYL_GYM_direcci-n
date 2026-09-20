@@ -260,13 +260,12 @@ export function Advisors({ state, year, month, onReload }: { state: AppState; ye
           sub={dailySummary.delta >= 0 ? "sobre proyección" : "bajo proyección"}
           tone={dailySummary.delta >= 0 ? "green" : "red"}
         />
-      </div>
-      <aside className="advisor-side">
-        <div className="policy-note">
+        <div className="policy-note advisor-policy-note">
           <strong>{state.commissionPolicy?.label}</strong>
           <span>Las comisiones se liquidan sobre la venta total con el porcentaje de la meta alcanzada, sin multiplicadores de calidad o gestión.</span>
         </div>
-
+      </div>
+      <aside className="advisor-side">
         <section className="panel score-distribution-panel">
           <div className="panel-title"><h2>Distribución de scores</h2><Star size={18} /></div>
           <div className="score-distribution-bar">

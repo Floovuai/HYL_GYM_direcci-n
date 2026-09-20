@@ -2,6 +2,9 @@
 
 Solo se listan las versiones con instalador Desktop. Detalle de entrega en [docs/DESKTOP_RELEASE.md](docs/DESKTOP_RELEASE.md).
 
+## 0.1.11 - 2026-09-20
+- Asesores: el cartel **Bonificacion 2026 por porcentaje de meta alcanzada** pasa al hueco libre de la segunda fila de KPIs y los paneles **Distribucion de scores** y **Ritmo de venta de asesores** suben en la columna derecha.
+
 ## 0.1.10 - 2026-09-20
 - Tendencias: los graficos **Habito por dia de semana**, **Habito por tramo del mes** y **Mix de planes del periodo** ocupan todo el ancho y el alto libre de su tarjeta (antes tenian 190 px fijos y dejaban un hueco inferior).
 

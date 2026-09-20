@@ -8488,3 +8488,26 @@ td small {
   position: absolute;
   inset: 0;
 }
+
+/* Asesores: el cartel de bonificacion ocupa el hueco de la segunda fila de KPIs
+   y los paneles laterales suben al quedar libres del cartel. */
+@media (min-width: 1101px) {
+  .advisors-view .dashboard-kpi-grid {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+
+  .advisors-view .dashboard-kpi-grid .kpi:nth-child(2) {
+    grid-column: auto;
+  }
+
+  .advisors-view .dashboard-kpi-grid .advisor-policy-note {
+    grid-column: span 4;
+    align-content: center;
+  }
+}
+
+@media (max-width: 1100px) {
+  .advisors-view .dashboard-kpi-grid .advisor-policy-note {
+    grid-column: 1 / -1;
+  }
+}
