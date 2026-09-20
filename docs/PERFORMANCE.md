@@ -39,6 +39,10 @@ Los tiempos dependen del equipo; para reproducirlos use el encabezado `Server-Ti
 - **Service worker**: ya no fuerza `no-store`; deja actuar a la cache HTTP para que los assets inmutables y el `ETag` funcionen.
 - **Memoizacion**: `Kpi` y `Progress` usan `React.memo`; el buscador de Experiencia usa `useDeferredValue`.
 
+## Diseno de los graficos de Tendencias
+
+Las tarjetas de la primera fila de `growth-dashboard-grid` son columnas flex; el grafico va dentro de `.growth-chart` (`flex: 1`, minimo 190 px) y `.growth-chart-fill` (posicion absoluta) para que `ResponsiveContainer` use el alto restante de la tarjeta.
+
 ## Correccion asociada
 
 La tabla de sedes de **Configuracion** calculaba ventas y registros unidos con asesores, por lo que cada venta se contaba tantas veces como asesores tiene la sede (p. ej. una sede con 5 asesores mostraba 5 veces sus ventas). Ahora usa subconsultas agregadas: las cifras son las reales y la consulta es ~5 veces mas rapida. No afecta comisiones, metas ni KPI del tablero (esos usan otras consultas).

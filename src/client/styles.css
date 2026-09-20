@@ -8470,3 +8470,21 @@ td small {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* Graficos de habito y mix: ocupan todo el alto libre de la tarjeta (sin hueco inferior). */
+.growth-dashboard-grid > .growth-panel {
+  display: flex;
+  flex-direction: column;
+}
+
+.growth-chart {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 190px;
+  width: 100%;
+}
+
+.growth-chart-fill {
+  position: absolute;
+  inset: 0;
+}

@@ -2,6 +2,9 @@
 
 Solo se listan las versiones con instalador Desktop. Detalle de entrega en [docs/DESKTOP_RELEASE.md](docs/DESKTOP_RELEASE.md).
 
+## 0.1.10 - 2026-09-20
+- Tendencias: los graficos **Habito por dia de semana**, **Habito por tramo del mes** y **Mix de planes del periodo** ocupan todo el ancho y el alto libre de su tarjeta (antes tenian 190 px fijos y dejaban un hueco inferior).
+
 ## 0.1.9 - 2026-09-20
 - **Velocidad**: el estado de la plataforma se calcula una vez por cambio de datos y se sirve desde memoria con ETag; los refrescos repetidos responden en milisegundos (antes ~440 ms y 311 KB cada vez).
 - **Carga inicial**: las vistas se descargan al abrirlas (JS inicial de 172 KB a 31 KB) y los archivos con hash se guardan en cache del navegador.

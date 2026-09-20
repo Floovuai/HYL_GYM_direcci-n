@@ -287,7 +287,8 @@ export function SalesTrends({ state, onReload, setNotice }: { state: AppState; o
         <section className="panel growth-panel">
           <div className="panel-title"><h2>Hábito por día de semana</h2><LineChart size={18} /></div>
           {weekdayChartRows.length ? (
-            <ResponsiveContainer width="100%" height={190}>
+            <div className="growth-chart"><div className="growth-chart-fill">
+            <ResponsiveContainer width="100%" height="100%">
               <BarChart data={weekdayChartRows} margin={{ top: 8, right: 8, bottom: 4, left: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} />
                 <XAxis dataKey="chartName" interval={0} tick={{ fontSize: 11 }} />
@@ -296,6 +297,8 @@ export function SalesTrends({ state, onReload, setNotice }: { state: AppState; o
                 <Bar dataKey="revenue" name="Ventas" fill="#33e6a4" radius={[5, 5, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
+            </div>
+</div>
           ) : <Empty />}
         </section>
 
@@ -309,7 +312,8 @@ export function SalesTrends({ state, onReload, setNotice }: { state: AppState; o
             <CalendarDays size={18} />
           </div>
           {monthPartChartRows.length ? (
-            <ResponsiveContainer width="100%" height={190}>
+            <div className="growth-chart"><div className="growth-chart-fill">
+            <ResponsiveContainer width="100%" height="100%">
               <BarChart data={monthPartChartRows} margin={{ top: 8, right: 8, bottom: 4, left: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} />
                 <XAxis dataKey="chartName" interval={0} tick={{ fontSize: 11 }} />
@@ -321,13 +325,16 @@ export function SalesTrends({ state, onReload, setNotice }: { state: AppState; o
                 <Bar dataKey="projected" name="projected" stackId="tramo" fill="rgba(92, 200, 255, 0.35)" radius={[5, 5, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
+            </div>
+</div>
           ) : <Empty />}
         </section>
 
         <section className="panel growth-panel">
           <div className="panel-title"><h2>Mix de planes del período</h2><FileSpreadsheet size={18} /></div>
           {planMixChartRows.length ? (
-            <ResponsiveContainer width="100%" height={190}>
+            <div className="growth-chart"><div className="growth-chart-fill">
+            <ResponsiveContainer width="100%" height="100%">
               <BarChart data={planMixChartRows} margin={{ top: 8, right: 8, bottom: 26, left: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} />
                 <XAxis dataKey="chartName" interval={0} angle={-30} textAnchor="end" height={50} tick={{ fontSize: 9.5 }} />
@@ -336,6 +343,8 @@ export function SalesTrends({ state, onReload, setNotice }: { state: AppState; o
                 <Bar dataKey="revenue" name="Ventas" fill="#f5b944" radius={[5, 5, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
+            </div>
+</div>
           ) : <Empty />}
         </section>
 
