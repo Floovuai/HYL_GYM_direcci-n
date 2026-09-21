@@ -1,0 +1,42 @@
+appId: com.dashcom.desktop
+productName: DashCom
+copyright: Copyright 2026 DashCom
+asar: true
+asarUnpack:
+  - node_modules/better-sqlite3/**/*
+npmRebuild: false
+compression: maximum
+electronLanguages:
+  - es
+  - es-419
+  - en-US
+directories:
+  output: release
+files:
+  - desktop/main.cjs
+  - desktop/server.cjs
+  - desktop/splash.html
+  - dist/client/**/*
+  - dist/server/**/*
+  - package.json
+extraResources:
+  - from: desktop-build/seed
+    to: seed
+  - from: desktop-build/runtime.env
+    to: runtime.env
+win:
+  icon: build/icon.ico
+  target:
+    - target: nsis
+      arch:
+        - x64
+  artifactName: DashCom-Setup-${version}-${arch}.${ext}
+nsis:
+  include: desktop/installer.nsh
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+  shortcutName: DashCom
+  runAfterFinish: true
+  deleteAppDataOnUninstall: false

@@ -1,10 +1,22 @@
 node_modules/
+tools/node_modules
 dist/
 data/*.db
 data/*.db-*
 uploads/*
 !uploads/.gitkeep
 tmp/
+output/
+outputs/
+backups/
+desktop-build/
+release/
+.claude/
+.codex_spreadsheet_work/
+
+# Ad-hoc data backups kept next to runtime JSON (not runtime inputs)
+src/server/data/*.before-*
+src/server/data/*.json.before-*
 .env
 .DS_Store
 Thumbs.db

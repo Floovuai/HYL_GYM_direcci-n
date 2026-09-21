@@ -17,9 +17,6 @@ export type QualityRating = "" | "Malo" | "Regular" | "Bueno" | "Excelente";
 export type CommissionLevel =
   | "Sin venta"
   | "Sin comision"
-  | "Activacion"
-  | "Bronce"
-  | "Plata"
   | "Meta 1"
   | "Meta 2"
   | "Meta 3"
