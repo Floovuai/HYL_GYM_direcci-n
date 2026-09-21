@@ -30,7 +30,7 @@ function statusClass(status: string) {
 function markerStyle(competitor: any) {
   const base = competitor.type === "indirecto" ? "#f5b944" : "#ff6b5e";
   const pending = competitor.status === "por_verificar";
-  return { color: base, fillColor: base, fillOpacity: pending ? 0.18 : 0.85, weight: pending ? 2 : 1.5, dashArray: pending ? "3 3" : undefined };
+  return { color: pending ? "#7a1f18" : "#5a120c", fillColor: base, fillOpacity: pending ? 0.55 : 0.95, weight: 2, dashArray: pending ? "3 2" : undefined };
 }
 
 async function api(path: string, options: RequestInit = {}) {
@@ -100,6 +100,9 @@ export function Competition({ setNotice }: { setNotice: (value: string) => void 
   const mapEl = React.useRef<HTMLDivElement | null>(null);
   const mapRef = React.useRef<L.Map | null>(null);
   const layerRef = React.useRef<L.LayerGroup | null>(null);
+  const boundsRef = React.useRef<L.LatLngBounds | null>(null);
+  const userMovedRef = React.useRef(false);
+  const lastFitRef = React.useRef<number | "all" | null>(null);
   const modeRef = React.useRef<Mode>("");
   const branchRef = React.useRef<any>(null);
   modeRef.current = mode;
@@ -131,8 +134,15 @@ export function Competition({ setNotice }: { setNotice: (value: string) => void 
     });
     mapRef.current = map;
     // El contenedor cambia de tamano durante la animacion de entrada y al redimensionar la ventana.
-    const observer = new ResizeObserver(() => map.invalidateSize({ animate: false }));
+    const observer = new ResizeObserver(() => {
+      map.invalidateSize({ animate: false });
+      if (!userMovedRef.current && boundsRef.current?.isValid()) map.fitBounds(boundsRef.current.pad(0.08), { maxZoom: 16, animate: false });
+    });
     observer.observe(mapEl.current);
+    const markMoved = () => { userMovedRef.current = true; };
+    mapEl.current.addEventListener("wheel", markMoved, { passive: true });
+    mapEl.current.addEventListener("mousedown", markMoved);
+    mapEl.current.addEventListener("touchstart", markMoved, { passive: true });
     return () => {
       observer.disconnect();
       map.remove();
@@ -149,8 +159,8 @@ export function Competition({ setNotice }: { setNotice: (value: string) => void 
     const bounds = L.latLngBounds([]);
     for (const b of mappable) {
       if (branchId !== "all" && b.id !== branchId) continue;
-      const circle = L.circle([b.lat, b.lng], { radius: b.radiusM, color: "#33e6a4", weight: 1.5, dashArray: "6 6", fillColor: "#33e6a4", fillOpacity: 0.05 }).addTo(layer);
-      L.circleMarker([b.lat, b.lng], { radius: 9, color: "#0b0d0f", weight: 2, fillColor: "#33e6a4", fillOpacity: 1 })
+      const circle = L.circle([b.lat, b.lng], { radius: b.radiusM, color: "#0a8f5f", weight: 3, dashArray: "8 8", fillColor: "#33e6a4", fillOpacity: 0.12 }).addTo(layer);
+      L.circleMarker([b.lat, b.lng], { radius: 11, color: "#0b0d0f", weight: 3, fillColor: "#33e6a4", fillOpacity: 1 })
         .bindTooltip(`<strong>${esc(b.name)}</strong><br>Radio ${km(b.radiusM)}`, { direction: "top" })
         .on("click", () => setBranchId(b.id))
         .addTo(layer);
@@ -158,14 +168,18 @@ export function Competition({ setNotice }: { setNotice: (value: string) => void 
     }
     for (const c of competitors) {
       if (c.lat == null || c.lng == null || c.status === "cerrado") continue;
-      L.circleMarker([c.lat, c.lng], { radius: 7, ...markerStyle(c) })
+      L.circleMarker([c.lat, c.lng], { radius: 8, ...markerStyle(c) })
         .bindTooltip(`<strong>${esc(c.name)}</strong><br>${esc(c.segment)} · ${km(c.distanceM)}${c.status === "por_verificar" ? "<br>Por verificar" : ""}`, { direction: "top" })
         .on("click", () => setSelectedId(c.id))
         .addTo(layer);
       bounds.extend([c.lat, c.lng]);
     }
     map.invalidateSize({ animate: false });
-    if (bounds.isValid()) map.fitBounds(bounds.pad(0.08), { maxZoom: 16, animate: false });
+    // Solo se re-encuadra al cambiar de sede o si la persona no ha movido el mapa: una recarga de datos no debe quitarle su zoom.
+    if (lastFitRef.current !== branchId) userMovedRef.current = false;
+    lastFitRef.current = branchId;
+    boundsRef.current = bounds.isValid() ? bounds : null;
+    if (bounds.isValid() && !userMovedRef.current) map.fitBounds(bounds.pad(0.08), { maxZoom: 16, animate: false });
   }, [data, branchId, mappable.length, competitors.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   React.useEffect(() => {
@@ -226,14 +240,14 @@ export function Competition({ setNotice }: { setNotice: (value: string) => void 
         <div className="competition-chips">
           <button className={branchId === "all" ? "chip active" : "chip"} onClick={() => setBranchId("all")}>Todas las sedes</button>
           {mappable.map((b) => (
-            <button key={b.id} className={branchId === b.id ? "chip active" : "chip"} onClick={() => setBranchId(b.id)}>{b.name}</button>
+            <button key={b.id} className={branchId === b.id ? "chip active" : "chip"} onClick={() => setBranchId(b.id)}>{b.name} · {allCompetitors.filter((c) => c.branchId === b.id).length}</button>
           ))}
           {pendingBranches.map((b) => (
             <button key={b.id} className={branchId === b.id ? "chip active warn" : "chip warn"} onClick={() => setBranchId(b.id)} title="Sede sin ubicación">{b.name} · ubicar</button>
           ))}
         </div>
         <div className="competition-actions">
-          <button className="secondary-button" onClick={discover} disabled={Boolean(busy) || (branchId !== "all" && !selectedBranch?.lat)}>
+          <button className="secondary-button" onClick={discover} disabled={Boolean(busy) || data.discovering || (branchId !== "all" && !selectedBranch?.lat)}>
             <Search size={15} /> {busy === "discover" ? "Buscando…" : branchId === "all" ? "Buscar competidores en todas las sedes" : `Buscar cerca de ${selectedBranch?.name}`}
           </button>
           <button className="secondary-button" onClick={checkPrices} disabled={Boolean(busy) || !data.groqConfigured} title={data.groqConfigured ? "" : "Configura la clave de Groq"}>
@@ -246,6 +260,11 @@ export function Competition({ setNotice }: { setNotice: (value: string) => void 
             <Crosshair size={15} /> {mode === "add" ? "Haz clic en el mapa…" : "Agregar competidor en el mapa"}
           </button>
         </div>
+        {data.discovering ? (
+          <p className="competition-info"><span className="competition-spinner" /> Buscando competidores cerca de tus sedes en OpenStreetMap… Aparecerán aquí a medida que se encuentren (1 a 3 minutos la primera vez).</p>
+        ) : !allCompetitors.length ? (
+          <p className="competition-info">Todavía no hay competidores. La búsqueda automática se ejecuta al abrir DashCom con internet; también puedes iniciarla con «Buscar competidores».</p>
+        ) : null}
         {!data.groqConfigured ? <p className="competition-warning">Falta la clave de Groq: sin ella no se interpretan informes ni se revisan precios. Configúrala en Configuración.</p> : null}
       </section>
 

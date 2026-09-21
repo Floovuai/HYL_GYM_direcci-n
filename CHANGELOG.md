@@ -2,6 +2,12 @@
 
 Solo se listan las versiones con instalador Desktop. Detalle de entrega en [docs/DESKTOP_RELEASE.md](docs/DESKTOP_RELEASE.md).
 
+## 0.1.13 - 2026-09-20
+- **Competencia ya viene cargada**: al abrir DashCom con internet se buscan automaticamente los gimnasios alrededor de cada sede (y se repite cada 30 dias). Si OpenStreetMap no responde para alguna sede, se reintenta y la busqueda no se da por completa hasta que todas respondan.
+- Aviso en pantalla mientras busca, contador de competidores por sede y mapa que se re-encuadra correctamente al cargar (antes podia quedar muy alejado).
+- Marcadores y radio con mas contraste sobre el mapa.
+- Arranque de escritorio: el puerto libre se busca en la misma direccion en la que escucha el servidor (0.0.0.0), evitando un cierre inesperado cuando otra instancia o un contenedor Docker ya usa el puerto 4310.
+
 ## 0.1.12 - 2026-09-20
 - Nueva pestana **Competencia**: mapa por sede con radio propio, busqueda de gimnasios cercanos (OpenStreetMap), lista por verificar, tabla de precios con tu oferta al lado y cambios recientes.
 - **Subir informe**: Groq interpreta un archivo (.xlsx, .csv, .txt, .md) o texto pegado, actualiza los competidores existentes y crea los nuevos por verificar.

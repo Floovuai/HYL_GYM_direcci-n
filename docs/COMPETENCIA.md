@@ -5,7 +5,7 @@ Pestana **Competencia** (desde la version 0.1.12): mapa de cada sede con sus com
 ## Que hace
 
 1. **Ubica cada sede** (coordenadas, direccion, enlace de Google Maps y radio de vigilancia propio).
-2. **Encuentra gimnasios cercanos** dentro del radio de cada sede (OpenStreetMap) y los deja *por verificar*.
+2. **Encuentra gimnasios cercanos** dentro del radio de cada sede (OpenStreetMap) y los deja *por verificar*. Es automatico: se ejecuta al abrir DashCom con internet y luego cada 30 dias; el boton *Buscar competidores* lo repite cuando quieras.
 3. **Muestra un mapa** por sede o de todas, con marcadores por tipo y estado.
 4. **Tabla de precios** debajo del mapa: plan, precio mensual, matricula, promocion, fecha, fuente y confianza, junto a tu propia oferta.
 5. **Sigue los cambios**: cada semana revisa las paginas de planes registradas y registra cambios de precio, promocion, planes nuevos o retirados.
@@ -34,7 +34,7 @@ Las sedes cerradas (p. ej. Calle 109) o sin ubicacion fisica (Online) no aparece
 
 ## Flujo de trabajo recomendado
 
-1. **Buscar competidores** (por sede o en todas). Los hallazgos quedan *por verificar*; los que caen a menos de 60 m de una de tus sedes se avisan como posible ficha antigua.
+1. **Revisar los competidores encontrados**: la busqueda es automatica (20 segundos despues de abrir DashCom la primera vez; tarda de 1 a 3 minutos y los competidores van apareciendo). Tambien puedes lanzarla con *Buscar competidores* (por sede o en todas). Los hallazgos quedan *por verificar*; los que caen a menos de 60 m de una de tus sedes se avisan como posible ficha antigua.
 2. Revisar la lista **Por verificar**: *Confirmar* los que compiten, *Descartar* el resto.
 3. Completar en cada competidor su **pagina de planes y precios**: desde ese momento se revisa cada semana.
 4. **Subir informes** cuando el equipo tenga datos de campo (precios, promociones, redes).
@@ -67,8 +67,8 @@ Boton **Subir informe**: archivos `.xlsx` (hojas 1 a 3), `.csv`, `.tsv`, `.txt`,
 
 ## Revision semanal de precios
 
-- Solo trabaja mientras DashCom esta abierto: se revisa 90 segundos despues de iniciar y cada 6 horas si pasaron 7 dias desde la ultima revision correcta. Para que corra sin depender del equipo, usa el despliegue Docker siempre encendido.
-- Requiere la clave de Groq. Puede desactivarse con `COMPETITION_WEEKLY=0`.
+- Las tareas automaticas solo trabajan mientras DashCom esta abierto. Un temporizador se ejecuta 20 segundos despues de iniciar y cada 6 horas: busca competidores si pasaron 30 dias desde la ultima busqueda completa (si alguna sede no responde, se reintenta una vez y luego en la siguiente revision) y revisa precios si pasaron 7 dias desde la ultima revision correcta. Para que corra sin depender del equipo, usa el despliegue Docker siempre encendido.
+- Requiere la clave de Groq. `COMPETITION_WEEKLY=0` desactiva todas las tareas automaticas del modulo (busqueda y revision de precios).
 - Limites reales: si el precio se carga con JavaScript, esta en Instagram/WhatsApp o dice "cotiza", la pagina queda como *sin precio publico legible* y se ingresa a mano o por informe.
 - Solo se leen paginas publicas (`http`/`https`, nunca direcciones locales o de red privada).
 

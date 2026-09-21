@@ -75,7 +75,9 @@ function findAvailablePort(startPort = 4310) {
       const probe = net.createServer();
       probe.unref();
       probe.once("error", () => tryPort(port + 1));
-      probe.listen(port, "127.0.0.1", () => {
+      // Se prueba en 0.0.0.0, la misma direccion en la que escucha el servidor: en Windows un puerto tomado
+      // en 0.0.0.0 (otra instancia o un contenedor Docker) puede parecer libre si solo se prueba 127.0.0.1.
+      probe.listen(port, "0.0.0.0", () => {
         probe.close(() => resolve(port));
       });
     };

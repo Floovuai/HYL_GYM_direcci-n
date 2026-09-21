@@ -33,10 +33,15 @@ import {
 type Row = Record<string, any>;
 
 const USER_AGENT = "DashCom-Desktop/0.1 (seguimiento de competencia; uso interno)";
-const OVERPASS_ENDPOINTS = ["https://overpass-api.de/api/interpreter", "https://overpass.kumi.systems/api/interpreter"];
+const OVERPASS_ENDPOINTS = [
+  "https://overpass-api.de/api/interpreter",
+  "https://overpass.kumi.systems/api/interpreter",
+  "https://overpass.private.coffee/api/interpreter"
+];
 const MAX_RADIUS_M = 5000;
 const MIN_RADIUS_M = 300;
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+const MONTH_MS = 30 * 24 * 60 * 60 * 1000;
 const MAX_REPORT_CHARS = 42_000;
 
 function httpError(message: string, statusCode = 400) {
@@ -506,6 +511,53 @@ export async function discoverForBranch(branchId: number) {
   return summary;
 }
 
+let discoveryRunning = false;
+
+// Busca en todas las sedes ubicadas. Cada sede va por separado: si OpenStreetMap falla en una, las demas continuan.
+export async function discoverAll(kind: "descubrimiento_auto" | "descubrimiento_manual" = "descubrimiento_manual", onlyBranchId?: number) {
+  if (discoveryRunning) throw httpError("Ya hay una busqueda de competidores en curso.", 409);
+  discoveryRunning = true;
+  publishRealtime("competition_updated", { kind: "discovery_started" });
+  const results: Array<Row> = [];
+  try {
+    const targets = onlyBranchId
+      ? [onlyBranchId]
+      : (await all<Row>("SELECT id FROM branches WHERE latitude IS NOT NULL AND COALESCE(location_status,'') NOT IN ('cerrada','sin_ubicacion')")).map((row) => Number(row.id));
+    for (const id of targets) {
+      try {
+        results.push(await discoverForBranch(id));
+      } catch (error) {
+        if (targets.length === 1) throw error;
+        const branch = await get<Row>("SELECT display_name FROM branches WHERE id = ?", [id]);
+        results.push({ branch: branch?.display_name ?? id, error: error instanceof Error ? error.message : "Error" });
+      }
+      if (targets.length > 1) await sleep(2500);
+    }
+    // Los servidores publicos de OpenStreetMap a veces agotan el tiempo: se reintentan una vez las sedes que fallaron.
+    if (targets.length > 1 && results.some((item) => item.error)) {
+      await sleep(20_000);
+      for (let index = 0; index < results.length; index += 1) {
+        if (!results[index].error) continue;
+        const branch = await get<Row>("SELECT id FROM branches WHERE display_name = ?", [results[index].branch]);
+        if (!branch) continue;
+        try {
+          results[index] = await discoverForBranch(Number(branch.id));
+        } catch {
+          // Se conserva el error: la busqueda se marca incompleta y se reintenta mas tarde.
+        }
+        await sleep(2500);
+      }
+    }
+    // Solo se da por completa si todas las sedes respondieron; si no, el programador la repite en la siguiente revision (6 horas).
+    const ok = results.length > 0 && results.every((item) => !item.error);
+    await run("INSERT INTO competition_runs (kind, status, summary, finished_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)", [kind, ok ? "ok" : "error", JSON.stringify(results)]);
+    return results;
+  } finally {
+    discoveryRunning = false;
+    publishRealtime("competition_updated", { kind: "discovery_finished" });
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Alta manual y edicion
 // ---------------------------------------------------------------------------
@@ -819,23 +871,34 @@ export async function checkPrices(onlyCompetitorId?: number) {
   }
 }
 
-// La app de escritorio solo trabaja mientras esta abierta: se revisa al iniciar y cada 6 horas
-// si ya pasaron 7 dias desde la ultima revision semanal correcta.
+async function lastRunAt(kind: string) {
+  const last = await get<Row>("SELECT finished_at FROM competition_runs WHERE kind = ? AND status = 'ok' ORDER BY finished_at DESC LIMIT 1", [kind]);
+  if (!last?.finished_at) return 0;
+  const text = String(last.finished_at).replace(" ", "T");
+  return new Date(/Z|[+-]\d\d:?\d\d$/.test(text) ? text : `${text}Z`).getTime();
+}
+
+// Tareas automaticas (solo mientras DashCom esta abierto):
+//  - busqueda de competidores alrededor de cada sede: al iniciar si nunca se hizo y luego cada 30 dias;
+//  - revision de precios: cada 7 dias (requiere Groq).
 export function startCompetitionScheduler() {
   if (process.env.COMPETITION_WEEKLY === "0") return;
   const tick = async () => {
     try {
+      if (Date.now() - (await lastRunAt("descubrimiento_auto")) >= MONTH_MS) await discoverAll("descubrimiento_auto");
+    } catch (error) {
+      console.warn("Busqueda automatica de competidores:", error instanceof Error ? error.message : error);
+    }
+    try {
       const { apiKey } = await groqConfig();
       if (!apiKey) return;
-      const last = await get<Row>("SELECT finished_at FROM competition_runs WHERE kind = 'precios_semanal' AND status = 'ok' ORDER BY finished_at DESC LIMIT 1");
-      const lastAt = last?.finished_at ? new Date(`${String(last.finished_at).replace(" ", "T")}${/Z|[+-]\d\d:?\d\d$/.test(String(last.finished_at)) ? "" : "Z"}`).getTime() : 0;
-      if (Date.now() - lastAt < WEEK_MS) return;
+      if (Date.now() - (await lastRunAt("precios_semanal")) < WEEK_MS) return;
       await checkPrices();
     } catch (error) {
       console.warn("Revision semanal de competencia:", error instanceof Error ? error.message : error);
     }
   };
-  setTimeout(tick, 90_000).unref?.();
+  setTimeout(tick, Math.max(1000, Number(process.env.COMPETITION_START_DELAY_MS || 20_000))).unref?.();
   setInterval(tick, 6 * 60 * 60 * 1000).unref?.();
 }
 
@@ -879,6 +942,8 @@ export async function buildCompetitionState() {
   return {
     generatedAt: new Date().toISOString(),
     groqConfigured: Boolean(apiKey),
+    discovering: discoveryRunning,
+    priceChecking: priceCheckRunning,
     branches: branches.map((row) => ({
       id: row.id, name: row.display_name, active: Number(row.active ?? 1), address: row.address || "", mapsUrl: row.maps_url || "",
       lat: row.latitude, lng: row.longitude, radiusM: Number(row.radius_m) || 1500, locationStatus: row.location_status || "pendiente"
@@ -931,22 +996,8 @@ export function registerCompetitionRoutes(app: express.Express, upload: multer.M
   }));
 
   app.post("/api/competition/discover", wrap(async (req, res) => {
-    const branchId = req.body?.branchId ? Number(req.body.branchId) : null;
-    const targets = branchId
-      ? [branchId]
-      : (await all<Row>("SELECT id FROM branches WHERE latitude IS NOT NULL AND COALESCE(location_status,'') NOT IN ('cerrada','sin_ubicacion')")).map((row) => Number(row.id));
-    // Cada sede se busca por separado: si OpenStreetMap falla en una, las demas continuan.
-    const results: Array<Row> = [];
-    for (const id of targets) {
-      try {
-        results.push(await discoverForBranch(id));
-      } catch (error) {
-        if (targets.length === 1) throw error;
-        const branch = await get<Row>("SELECT display_name FROM branches WHERE id = ?", [id]);
-        results.push({ branch: branch?.display_name ?? id, error: error instanceof Error ? error.message : "Error" });
-      }
-      if (targets.length > 1) await sleep(1500);
-    }
+    const branchId = req.body?.branchId ? Number(req.body.branchId) : undefined;
+    const results = await discoverAll("descubrimiento_manual", branchId);
     res.json({ ok: results.some((item) => !item.error), results });
   }));
 

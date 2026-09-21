@@ -26,7 +26,7 @@ function prepared(database: SqlDatabase, sql: string): Statement {
 // Version de datos: sube con cada escritura relevante. Permite invalidar caches
 // en memoria (estado de la app) sin recalcular ni consultar la base.
 let dataVersion = 0;
-const NON_DATA_WRITE = /^\s*(?:INSERT(?:\s+OR\s+\w+)?\s+INTO|UPDATE|DELETE\s+FROM)\s+(?:metric_cache|app_errors|ai_context_snapshots|ai_insights)\b/i;
+const NON_DATA_WRITE = /^\s*(?:INSERT(?:\s+OR\s+\w+)?\s+INTO|UPDATE|DELETE\s+FROM)\s+(?:metric_cache|app_errors|ai_context_snapshots|ai_insights|competitor_price_obs|competitor_changes|competition_runs)\b/i;
 const dataListeners = new Set<() => void>();
 
 export function getDataVersion() {
